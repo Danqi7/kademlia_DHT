@@ -6,7 +6,6 @@ package libkademlia
 
 import (
 	"net"
-	"log"
 )
 
 type KademliaRPC struct {
@@ -80,7 +79,6 @@ type FindNodeResult struct {
 }
 
 func (k *KademliaRPC) FindNode(req FindNodeRequest, res *FindNodeResult) error {
-	log.Println("Finding node~~~~~")
 	res.MsgID = CopyID(req.MsgID)
 	res.Nodes = k.kademlia.FindCloseNodes(req.NodeID)
 	res.Err = nil

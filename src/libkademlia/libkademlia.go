@@ -202,7 +202,6 @@ func (k *Kademlia) DoFindNode(contact *Contact, searchKey ID) ([]Contact, error)
 	request.MsgID = NewRandomID()
 
 	var result FindNodeResult
-	log.Println("lalalallalala")
 	err = client.Call("KademliaRPC.FindNode", request, &result)
 	if err != nil {
 		log.Fatal("FindNode: ", err)
@@ -322,6 +321,12 @@ func (k *Kademlia) FindCloseNodes(nodeID ID) ([]Contact) {
 	right := index+1
 
 	for { // might need to only return at most k tripels
+
+		if len(nodes) == 20 {
+			<- sem
+			return nodes
+		}
+
 		if left == -1 && right == bucketsCount {
 			// all buckest are searched, just return the nodes
 			<- sem
