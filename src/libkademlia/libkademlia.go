@@ -318,36 +318,34 @@ func (k *Kademlia) FindCloseNodes(nodeID ID) ([]Contact) {
 
 	// the closes bucket is not full, find nodes in other buckets
 	// until there are k nodes or all buckets are searched
-	left := index
-	right := index
+	left := index-1
+	right := index+1
 
 	for { // might need to only return at most k tripels
-		if left == 0 && right == bucketsCount-1 {
+		if left == -1 && right == bucketsCount {
 			// all buckest are searched, just return the nodes
 			<- sem
 			return nodes
 		}
 
-		if left != 0 {
-			left -= 1
-		}
+		if right < bucketsCount {
+			for _, node := range k.KbucketList[right].ContactList {
+				if node.Host != nil {
+					nodes = append(nodes, node)
+				}
 
-		if right != bucketsCount-1 {
+			}
 			right += 1
 		}
 
-		for _, node := range k.KbucketList[right].ContactList {
-			if node.Host != nil {
-				nodes = append(nodes, node)
+		if left >= 0 {
+			for _, node := range k.KbucketList[left].ContactList {
+				if node.Host != nil {
+					nodes = append(nodes, node)
+				}
+
 			}
-
+			left -= 1
 		}
-
-		for _, node := range k.KbucketList[left].ContactList {
-			if node.Host != nil {
-				nodes = append(nodes, node)
-			}
-		}
-
 	}
 }
