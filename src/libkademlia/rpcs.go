@@ -6,6 +6,7 @@ package libkademlia
 
 import (
 	"net"
+	"log"
 )
 
 type KademliaRPC struct {
@@ -79,7 +80,14 @@ type FindNodeResult struct {
 }
 
 func (k *KademliaRPC) FindNode(req FindNodeRequest, res *FindNodeResult) error {
-	// TODO: Implement.
+	log.Println("Finding node~~~~~")
+	res.MsgID = CopyID(req.MsgID)
+	res.Nodes = k.kademlia.FindCloseNodes(req.NodeID)
+	res.Err = nil
+
+	//update sender in the kbucket
+	k.kademlia.UpdateContact(&req.Sender)
+
 	return nil
 }
 

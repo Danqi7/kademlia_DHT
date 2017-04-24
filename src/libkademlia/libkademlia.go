@@ -169,9 +169,58 @@ func (k *Kademlia) DoStore(contact *Contact, key ID, value []byte) error {
 	return &CommandFailed{"Not implemented"}
 }
 
+
+type MsgIDMismatchError struct {
+	msg string
+}
+
+func (e *MsgIDMismatchError) Error() string {
+	return fmt.Sprintf("%s", e.msg)
+}
+
+type FindNodeError struct {
+	msg string
+}
+
+func (e *FindNodeError) Error() string {
+	return fmt.Sprintf("%s", e.msg)
+}
+
 func (k *Kademlia) DoFindNode(contact *Contact, searchKey ID) ([]Contact, error) {
 	// TODO: Implement
-	return nil, &CommandFailed{"Not implemented"}
+	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
+	path := rpc.DefaultRPCPath + "localhost" + strconv.Itoa(int(contact.Port))
+
+	client, err := rpc.DialHTTPPath("tcp", address, path)
+	if err != nil {
+		log.Fatal("Dialing: ", err, address)
+	}
+
+	request := new(FindNodeRequest)
+	request.Sender = *contact
+	request.NodeID = searchKey
+	request.MsgID = NewRandomID()
+
+	var result FindNodeResult
+	log.Println("lalalallalala")
+	err = client.Call("KademliaRPC.FindNode", request, &result)
+	if err != nil {
+		log.Fatal("FindNode: ", err)
+	}
+
+	if result.Err != nil {
+		return nil, &FindNodeError{"result Err from FindNode"}
+	}
+
+	//update contact in kbucket
+	if result.MsgID.Equals(request.MsgID) {
+		//update the responded contact
+		k.UpdateContact(contact)
+		return result.Nodes, nil
+	}
+
+	//MsgID mismatch
+	return nil, &MsgIDMismatchError{"MsgID mismatch between request and result for FindNode"}
 }
 
 func (k *Kademlia) DoFindValue(contact *Contact,
@@ -209,7 +258,7 @@ func (k *Kademlia) Unvanish(searchKey ID) (data []byte) {
 // update the input contact in the appropriate kbucket
 func (k *Kademlia) UpdateContact(update *Contact) {
 	sem <- 1
-	index := k.findBucketIndex(update.NodeID)
+	index := k.FindBucketIndex(update.NodeID)
 	bucket := k.KbucketList[index]
 	// log.Println("before, NodeID:", k.NodeID)
 	// bucket.PrintBucket()
@@ -233,7 +282,7 @@ func (k *Kademlia) UpdateContact(update *Contact) {
 }
 
 // find the appropriate kbucket for input id
-func (k *Kademlia) findBucketIndex(nodeId ID) (index int){
+func (k *Kademlia) FindBucketIndex(nodeId ID) (index int){
 	prefix := k.NodeID.Xor(nodeId).PrefixLen()
 	if prefix == 160 {
 		index = 0
@@ -242,4 +291,63 @@ func (k *Kademlia) findBucketIndex(nodeId ID) (index int){
 	}
 
 	return index
+}
+
+// find the k closest contacts in the KbucketList
+func (k *Kademlia) FindCloseNodes(nodeID ID) ([]Contact) {
+	index := k.FindBucketIndex(nodeID)
+
+	bucket := k.KbucketList[index]
+
+	nodes := make([]Contact, 0)
+	// log.Println("finding close nodes ?????>>>>>>>>>>>", index, len(k.KbucketList))
+	sem <- 1
+	for i := 0; i < len(bucket.ContactList); i++ {
+		nodes = append(nodes, bucket.ContactList[i])
+	}
+
+	if len(nodes) == 20 {
+		<- sem
+		return nodes
+	}
+
+	// for _, val := range k.KbucketList {
+	// 	val.PrintBucket()
+	// }
+	// log.Println("finding close nodes ?????>>>>>>>>>>>", k.NodeID)
+
+	// the closes bucket is not full, find nodes in other buckets
+	// until there are k nodes or all buckets are searched
+	left := index
+	right := index
+
+	for { // might need to only return at most k tripels
+		if left == 0 && right == bucketsCount-1 {
+			// all buckest are searched, just return the nodes
+			<- sem
+			return nodes
+		}
+
+		if left != 0 {
+			left -= 1
+		}
+
+		if right != bucketsCount-1 {
+			right += 1
+		}
+
+		for _, node := range k.KbucketList[right].ContactList {
+			if node.Host != nil {
+				nodes = append(nodes, node)
+			}
+
+		}
+
+		for _, node := range k.KbucketList[left].ContactList {
+			if node.Host != nil {
+				nodes = append(nodes, node)
+			}
+		}
+
+	}
 }
