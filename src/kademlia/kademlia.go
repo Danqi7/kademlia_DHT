@@ -56,7 +56,7 @@ func main() {
 	if err != nil {
 		log.Fatal("DialHTTP: ", err)
 	}
-
+	// log.Printf("======: ", firstPeerStr, rpc.DefaultRPCPath+hostname+port)
 	log.Printf("Pinging initial peer\n")
 
 	// This is a sample of what an RPC looks like
