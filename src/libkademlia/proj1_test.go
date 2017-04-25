@@ -131,10 +131,7 @@ func TestFindNode(t *testing.T) {
 	if contacts == nil || len(contacts) == 0 {
 		t.Error("No contacts were found")
 	}
-	//
-	// for _, contact := range contacts {
-	// 	log.Println(contact)
-	// }
+
 	//Check that the correct contacts were stored
 	//(and no other contacts)
 	var correct bool = false
@@ -213,4 +210,26 @@ func TestFindValue(t *testing.T) {
 
 	// TODO: Check that the correct contacts were stored
 	//       (and no other contacts)
+	var correct bool = false
+	count := 0
+	for _, bucket := range instance2.KbucketList {
+		for _, contact := range bucket.ContactList {
+			correct = false
+			for _, val := range contacts {
+				if val.NodeID.Equals(contact.NodeID) {
+					correct = true
+					count += 1
+				}
+			}
+
+			// other contacts are stored, test fail!
+			if correct == false {
+				t.Error("Error doing FindNode: Other contacts stored: ", contact)
+			}
+		}
+	}
+
+	if count != len(contacts) {
+		t.Error("Error doing FindNode: count contacts mismatch")
+	}
 }

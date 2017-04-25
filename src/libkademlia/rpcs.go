@@ -116,6 +116,23 @@ type FindValueResult struct {
 
 func (k *KademliaRPC) FindValue(req FindValueRequest, res *FindValueResult) error {
 	// TODO: Implement.
+	val, err := k.kademlia.LocalFindValue(req.Key)
+	// no val with this key, find close nodes instead
+	if err != nil {
+		res.Nodes = k.kademlia.FindCloseNodes(req.Sender.NodeID)
+	} else {
+		// val found
+		copyval := make([]byte, len(val))
+		copy(copyval, val)
+		res.Value = copyval
+	}
+
+	res.MsgID = CopyID(req.MsgID)
+	res.Err = nil
+
+	// update the contact in bucket
+	k.kademlia.UpdateContact(&req.Sender)
+
 	return nil
 }
 

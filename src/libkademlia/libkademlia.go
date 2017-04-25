@@ -293,10 +293,63 @@ func (e *FindLocalValError) Error() string {
 	return fmt.Sprintf("%s", e.msg)
 }
 
+type NoContactsAndValue struct {
+	msg string
+}
+
+func (e *NoContactsAndValue) Error() string {
+	return fmt.Sprintf("%s", e.msg)
+}
+
 func (k *Kademlia) DoFindValue(contact *Contact,
 	searchKey ID) (value []byte, contacts []Contact, err error) {
-	// TODO: Implement
-	return nil, nil, &CommandFailed{"Not implemented"}
+	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
+	path := rpc.DefaultRPCPath + "localhost" + strconv.Itoa(int(contact.Port))
+
+	client, err := rpc.DialHTTPPath("tcp", address, path)
+	if err != nil {
+		log.Fatal("Dialing: ", err, address)
+	}
+
+	request := new(FindValueRequest)
+	request.MsgID = NewRandomID()
+	request.Sender = k.SelfContact
+	request.Key = CopyID(searchKey)
+
+	var result FindValueResult
+	err = client.Call("KademliaRPC.FindValue", request, &result)
+	if err != nil {
+		log.Fatal("FindValue: ", err)
+	}
+
+	if result.MsgID.Equals(request.MsgID) {
+		//update contact in bucket
+		k.UpdateContact(contact)
+
+
+		if result.Value != nil {
+			return result.Value, nil, nil
+		}
+
+		if result.Nodes != nil && len(result.Nodes) != 0 {
+			// add returned contacts to its kbuckets, don't add the requestor itself
+			// might need this, need to double check with fabian
+			for _, cont := range result.Nodes {
+				if cont.NodeID.Equals(k.NodeID) {
+					continue
+				}
+				k.UpdateContact(&cont)
+			}
+			
+			return nil, result.Nodes, nil
+		}
+
+		log.Println("No contacts and value stored in this node: ", *contact)
+		return nil, nil, &NoContactsAndValue{"No contacts and value stored"}
+	}
+
+	//MsgID mismatch
+	return nil, nil, &MsgIDMismatchError{"MsgID mismatch between request and result for FindNode"}
 }
 
 func (k *Kademlia) LocalFindValue(searchKey ID) ([]byte, error) {
