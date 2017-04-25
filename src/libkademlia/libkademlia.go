@@ -93,7 +93,6 @@ func (e *ContactNotFoundError) Error() string {
 
 func (k *Kademlia) FindContact(nodeId ID) (*Contact, error) {
 	sem <- 1
-	// log.Println("finding contact........")
 	if nodeId == k.SelfContact.NodeID {
 		<- sem
 		return &k.SelfContact, nil
@@ -211,10 +210,21 @@ func (k *Kademlia) DoFindNode(contact *Contact, searchKey ID) ([]Contact, error)
 		return nil, &FindNodeError{"result Err from FindNode"}
 	}
 
-	//update contact in kbucket
+	// update contact in kbucket
+	// add returned contacts
 	if result.MsgID.Equals(request.MsgID) {
 		//update the responded contact
 		k.UpdateContact(contact)
+
+		// add returned contacts to its kbuckets, don't add the requestor itself
+		// might need this, need to double check with fabian
+		for _, cont := range result.Nodes {
+			if cont.NodeID.Equals(k.NodeID) {
+				continue
+			}
+			k.UpdateContact(&cont)
+		}
+
 		return result.Nodes, nil
 	}
 

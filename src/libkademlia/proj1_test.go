@@ -131,7 +131,7 @@ func TestFindNode(t *testing.T) {
 	if contacts == nil || len(contacts) == 0 {
 		t.Error("No contacts were found")
 	}
-	// 
+	//
 	// for _, contact := range contacts {
 	// 	log.Println(contact)
 	// }
