@@ -59,7 +59,14 @@ type StoreResult struct {
 }
 
 func (k *KademliaRPC) Store(req StoreRequest, res *StoreResult) error {
-	// TODO: Implement.
+	k.kademlia.StoreKeyVal(req.Key, req.Value)
+
+	res.MsgID = CopyID(req.MsgID)
+	res.Err = nil
+
+	// update contact in bucket
+	k.kademlia.UpdateContact(&req.Sender)
+
 	return nil
 }
 

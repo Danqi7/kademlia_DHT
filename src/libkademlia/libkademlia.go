@@ -19,14 +19,17 @@ const (
 	bucketsCount = 160
 )
 
-// assume one goroutine can access whole bucketlist at one time
+// assume only one goroutine can access whole bucketlist and table
+// of a node at one time
 var sem = make(chan int, 1)
+var semTable = make(chan int, 1)
 
 // Kademlia type. You can put whatever state you need in this.
 type Kademlia struct {
 	NodeID      ID
 	SelfContact Contact
 	KbucketList []Kbucket
+	Table		map[ID][]byte
 }
 
 func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
@@ -35,12 +38,13 @@ func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
 
 	// TODO: Initialize other state here as you add functionality.
 
-	//init 160 kbuckets
+	// init 160 kbuckets
 	k.KbucketList = make([]Kbucket, bucketsCount)
 	for i:= 0; i < bucketsCount; i++ {
 		k.KbucketList[i].Init(k.NodeID)
 	}
-
+	// init Table
+	k.Table = make(map[ID][]byte)
 
 
 	// Set up RPC server
@@ -89,6 +93,12 @@ type ContactNotFoundError struct {
 
 func (e *ContactNotFoundError) Error() string {
 	return fmt.Sprintf("%x %s", e.id, e.msg)
+}
+
+func (k *Kademlia) PrintKbucketList() {
+	for _, kbucket := range k.KbucketList {
+		kbucket.PrintBucket()
+	}
 }
 
 func (k *Kademlia) FindContact(nodeId ID) (*Contact, error) {
@@ -163,9 +173,52 @@ func (k *Kademlia) DoPing(host net.IP, port uint16) (*Contact, error) {
 
 }
 
+type StoreError struct {
+	msg string
+}
+
+func (e *StoreError) Error() string {
+	return fmt.Sprintf("%s", e.msg)
+}
+
+
 func (k *Kademlia) DoStore(contact *Contact, key ID, value []byte) error {
 	// TODO: Implement
-	return &CommandFailed{"Not implemented"}
+	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
+	path := rpc.DefaultRPCPath + "localhost" + strconv.Itoa(int(contact.Port))
+
+	client, err := rpc.DialHTTPPath("tcp", address, path)
+	if err != nil {
+		log.Fatal("Dialing: ", err, address)
+	}
+
+	request := new(StoreRequest)
+	request.MsgID = NewRandomID()
+	request.Sender = k.SelfContact
+	request.Key = CopyID(key)
+	request.Value = value
+
+	var result StoreResult
+	err = client.Call("KademliaRPC.Store", request, &result)
+	if err != nil {
+		log.Fatal("DoStore: ", err)
+	}
+
+
+	if result.MsgID.Equals(request.MsgID) {
+		// update contact in kbucket
+		k.UpdateContact(contact)
+
+		if result.Err != nil {
+			return &StoreError{"Unsuccessful Store"}
+		}
+
+		return nil
+	}
+
+	//MsgID mismatch
+	return &MsgIDMismatchError{"MsgID mismatch between request and result for DoStore"}
+
 }
 
 
@@ -196,7 +249,7 @@ func (k *Kademlia) DoFindNode(contact *Contact, searchKey ID) ([]Contact, error)
 	}
 
 	request := new(FindNodeRequest)
-	request.Sender = *contact
+	request.Sender = k.SelfContact
 	request.NodeID = searchKey
 	request.MsgID = NewRandomID()
 
@@ -232,6 +285,14 @@ func (k *Kademlia) DoFindNode(contact *Contact, searchKey ID) ([]Contact, error)
 	return nil, &MsgIDMismatchError{"MsgID mismatch between request and result for FindNode"}
 }
 
+type FindLocalValError struct {
+	msg string
+}
+
+func (e *FindLocalValError) Error() string {
+	return fmt.Sprintf("%s", e.msg)
+}
+
 func (k *Kademlia) DoFindValue(contact *Contact,
 	searchKey ID) (value []byte, contacts []Contact, err error) {
 	// TODO: Implement
@@ -239,8 +300,13 @@ func (k *Kademlia) DoFindValue(contact *Contact,
 }
 
 func (k *Kademlia) LocalFindValue(searchKey ID) ([]byte, error) {
-	// TODO: Implement
-	return []byte(""), &CommandFailed{"Not implemented"}
+	semTable <- 1
+	val, ok := k.Table[searchKey]
+	<- semTable
+	if ok == true && val != nil {
+		return val, nil
+	}
+	return []byte(""), &FindLocalValError{"Can't find the value in the local"}
 }
 
 // For project 2!
@@ -363,4 +429,14 @@ func (k *Kademlia) FindCloseNodes(nodeID ID) ([]Contact) {
 			left -= 1
 		}
 	}
+}
+
+func (k *Kademlia) StoreKeyVal(key ID, val []byte) {
+	copyval := make([]byte, len(val))
+	copy(copyval, val)
+
+	// store key, val to table
+	semTable <- 1
+	k.Table[CopyID(key)] = copyval
+	<- semTable
 }
