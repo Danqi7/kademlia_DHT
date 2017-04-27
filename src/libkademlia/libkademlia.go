@@ -62,8 +62,8 @@ func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
 	if err != nil {
 		return nil
 	}
-	s.HandleHTTP(rpc.DefaultRPCPath+hostname+port,
-		rpc.DefaultDebugPath+hostname+port)
+	s.HandleHTTP(rpc.DefaultRPCPath+port,
+		rpc.DefaultDebugPath+port)
 
 	l, err := net.Listen("tcp", laddr)
 	if err != nil {
@@ -146,7 +146,7 @@ func (e *NoResponse) Error() string {
 
 func (k *Kademlia) DoPing(host net.IP, port uint16) (*Contact, error) {
 	address := host.String() + ":" + strconv.Itoa(int(port))
-	path := rpc.DefaultRPCPath + "localhost" + strconv.Itoa(int(port))
+	path := rpc.DefaultRPCPath + strconv.Itoa(int(port))
 
 	client, err := rpc.DialHTTPPath("tcp", address, path)
 	if err != nil {
@@ -187,7 +187,7 @@ func (e *StoreError) Error() string {
 func (k *Kademlia) DoStore(contact *Contact, key ID, value []byte) error {
 	// TODO: Implement
 	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
-	path := rpc.DefaultRPCPath + "localhost" + strconv.Itoa(int(contact.Port))
+	path := rpc.DefaultRPCPath + strconv.Itoa(int(contact.Port))
 
 	client, err := rpc.DialHTTPPath("tcp", address, path)
 	if err != nil {
@@ -241,7 +241,7 @@ func (e *FindNodeError) Error() string {
 func (k *Kademlia) DoFindNode(contact *Contact, searchKey ID) ([]Contact, error) {
 	// TODO: Implement
 	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
-	path := rpc.DefaultRPCPath + "localhost" + strconv.Itoa(int(contact.Port))
+	path := rpc.DefaultRPCPath + strconv.Itoa(int(contact.Port))
 
 	client, err := rpc.DialHTTPPath("tcp", address, path)
 	if err != nil {
@@ -304,7 +304,7 @@ func (e *NoContactsAndValue) Error() string {
 func (k *Kademlia) DoFindValue(contact *Contact,
 	searchKey ID) (value []byte, contacts []Contact, err error) {
 	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
-	path := rpc.DefaultRPCPath + "localhost" + strconv.Itoa(int(contact.Port))
+	path := rpc.DefaultRPCPath + strconv.Itoa(int(contact.Port))
 
 	client, err := rpc.DialHTTPPath("tcp", address, path)
 	if err != nil {

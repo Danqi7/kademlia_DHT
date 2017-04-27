@@ -50,26 +50,33 @@ func main() {
 	// Confirm our server is up with a PING request and then exit.
 	// Your code should loop forever, reading instructions from stdin and
 	// printing their results to stdout. See README.txt for more details.
-	hostname, port, err := net.SplitHostPort(firstPeerStr)
+	_, port, err := net.SplitHostPort(firstPeerStr)
 	client, err := rpc.DialHTTPPath("tcp", firstPeerStr,
-		rpc.DefaultRPCPath+hostname+port)
+		rpc.DefaultRPCPath+port)
 	if err != nil {
 		log.Fatal("DialHTTP: ", err)
 	}
-	// log.Printf("======: ", firstPeerStr, rpc.DefaultRPCPath+hostname+port)
 	log.Printf("Pinging initial peer\n")
 
-	// This is a sample of what an RPC looks like
-	// TODO: Replace this with a call to your completed DoPing!
-	ping := new(libkademlia.PingMessage)
-	ping.MsgID = libkademlia.NewRandomID()
-	var pong libkademlia.PongMessage
-	err = client.Call("KademliaRPC.Ping", ping, &pong)
+	PingMsg := new(libkademlia.PingMessage)
+	PingMsg.Sender = kadem.SelfContact
+	PingMsg.MsgID = libkademlia.NewRandomID()
+
+	//Dial RPC
+	var PongMsg libkademlia.PongMessage
+	err = client.Call("KademliaRPC.Ping", PingMsg, &PongMsg)
 	if err != nil {
-		log.Fatal("Call: ", err)
+		log.Fatal("RPC Ping: ", err)
 	}
-	log.Printf("ping msgID: %s\n", ping.MsgID.AsString())
-	log.Printf("pong msgID: %s\n\n", pong.MsgID.AsString())
+
+	if PongMsg.MsgID.Equals(PingMsg.MsgID) {
+		//update the responded contact
+		update := PongMsg.Sender
+		kadem.UpdateContact(&update)
+	}
+
+	log.Printf("ping msgID: %s\n", PingMsg.MsgID.AsString())
+	log.Printf("pong msgID: %s\n\n", PongMsg.MsgID.AsString())
 
 	in := bufio.NewReader(os.Stdin)
 	quit := false
