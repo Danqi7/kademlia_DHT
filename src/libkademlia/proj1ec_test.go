@@ -15,6 +15,11 @@ const (
 	portBase2           = 7200
 )
 
+/**
+ * Explanation:
+ * This function ensures that when a bucket is full, and that
+ * the last instance is still alive, new entry will not be added
+ */
 func TestFullBucket(t *testing.T) {
 
 	var ids [instance_count]ID
@@ -66,7 +71,12 @@ func TestFullBucket(t *testing.T) {
 	return
 }
 
-func TestNewlyResolvedNodeIsAlwaysAtTailOfBucket(t *testing.T) {
+/**
+ * Explanation:
+ * This function ensures that whenever an instance is pinged, it will be placed
+ * at the tail (signifying the newest entry) of the bucket.
+ */
+func TestTailOfBucket(t *testing.T) {
 
 	var ids [instance_count]ID
 	var ks [instance_count](*Kademlia)
