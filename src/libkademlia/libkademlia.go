@@ -13,23 +13,25 @@ import (
 )
 
 const (
-	alpha = 3
-	b     = 8 * IDBytes
-	k     = 20
+	alpha        = 3
+	b            = 8 * IDBytes
+	k            = 20
 	bucketsCount = 160
 )
 
 // assume only one goroutine can access whole bucketlist and table
 // of a node at one time
-var sem = make(chan int, 1)
-var semTable = make(chan int, 1)
+// var k.sem = make(chan int, 1)
+// var k.semTable = make(chan int, 1)
 
 // Kademlia type. You can put whatever state you need in this.
 type Kademlia struct {
 	NodeID      ID
 	SelfContact Contact
 	KbucketList []Kbucket
-	Table		map[ID][]byte
+	Table       map[ID][]byte
+	sem         chan int
+	semTable    chan int
 }
 
 func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
@@ -40,12 +42,15 @@ func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
 
 	// init 160 kbuckets
 	k.KbucketList = make([]Kbucket, bucketsCount)
-	for i:= 0; i < bucketsCount; i++ {
+	for i := 0; i < bucketsCount; i++ {
 		k.KbucketList[i].Init(k.NodeID)
 	}
 	// init Table
 	k.Table = make(map[ID][]byte)
 
+	// init k.semaphores
+	k.sem = make(chan int, 1)
+	k.semTable = make(chan int, 1)
 
 	// Set up RPC server
 	// NOTE: KademliaRPC is just a wrapper around Kademlia. This type includes
@@ -102,24 +107,24 @@ func (k *Kademlia) PrintKbucketList() {
 }
 
 func (k *Kademlia) FindContact(nodeId ID) (*Contact, error) {
-	sem <- 1
+	k.sem <- 1
 	if nodeId == k.SelfContact.NodeID {
-		<- sem
+		<-k.sem
 		return &k.SelfContact, nil
 	}
 	// a comprehensive search for all kbuckets
 	// maybe a more efficient way to find contact is to search in the closest kbucket
-	for i := 0 ; i < len(k.KbucketList); i++ {
+	for i := 0; i < len(k.KbucketList); i++ {
 		kb := k.KbucketList[i]
 		for j := 0; j < len(kb.ContactList); j++ {
 			current := kb.ContactList[j]
 			if current.NodeID.Equals(nodeId) {
-				<- sem
+				<-k.sem
 				return &current, nil
 			}
 		}
 	}
-	<- sem
+	<-k.sem
 	return nil, &ContactNotFoundError{nodeId, "Not found"}
 }
 
@@ -163,13 +168,11 @@ func (k *Kademlia) DoPing(host net.IP, port uint16) (*Contact, error) {
 		//update the responded contact
 		update := PongMsg.Sender
 		k.UpdateContact(&update)
-		return &update,nil
+		return &update, nil
 	}
 
 	//otherwise, no response
 	return nil, &NoResponse{"No response from pinged contact"}
-
-
 
 }
 
@@ -180,7 +183,6 @@ type StoreError struct {
 func (e *StoreError) Error() string {
 	return fmt.Sprintf("%s", e.msg)
 }
-
 
 func (k *Kademlia) DoStore(contact *Contact, key ID, value []byte) error {
 	// TODO: Implement
@@ -204,7 +206,6 @@ func (k *Kademlia) DoStore(contact *Contact, key ID, value []byte) error {
 		log.Fatal("DoStore: ", err)
 	}
 
-
 	if result.MsgID.Equals(request.MsgID) {
 		// update contact in kbucket
 		k.UpdateContact(contact)
@@ -220,7 +221,6 @@ func (k *Kademlia) DoStore(contact *Contact, key ID, value []byte) error {
 	return &MsgIDMismatchError{"MsgID mismatch between request and result for DoStore"}
 
 }
-
 
 type MsgIDMismatchError struct {
 	msg string
@@ -326,7 +326,6 @@ func (k *Kademlia) DoFindValue(contact *Contact,
 		//update contact in bucket
 		k.UpdateContact(contact)
 
-
 		if result.Value != nil {
 			return result.Value, nil, nil
 		}
@@ -340,7 +339,7 @@ func (k *Kademlia) DoFindValue(contact *Contact,
 				}
 				k.UpdateContact(&cont)
 			}
-			
+
 			return nil, result.Nodes, nil
 		}
 
@@ -353,9 +352,9 @@ func (k *Kademlia) DoFindValue(contact *Contact,
 }
 
 func (k *Kademlia) LocalFindValue(searchKey ID) ([]byte, error) {
-	semTable <- 1
+	k.semTable <- 1
 	val, ok := k.Table[searchKey]
-	<- semTable
+	<-k.semTable
 	if ok == true && val != nil {
 		return val, nil
 	}
@@ -385,7 +384,7 @@ func (k *Kademlia) Unvanish(searchKey ID) (data []byte) {
 
 // update the input contact in the appropriate kbucket
 func (k *Kademlia) UpdateContact(update *Contact) {
-	sem <- 1
+	k.sem <- 1
 	index := k.FindBucketIndex(update.NodeID)
 	bucket := k.KbucketList[index]
 	// log.Println("before, NodeID:", k.NodeID)
@@ -394,8 +393,11 @@ func (k *Kademlia) UpdateContact(update *Contact) {
 	err := bucket.Update(*update)
 	//bucket is full
 	if err != nil {
+		// relinquish control because target could ping back
+		<-k.sem
 		first := bucket.ContactList[0]
-		_, err  := k.DoPing(first.Host, first.Port)
+		_, err := k.DoPing(first.Host, first.Port)
+		k.sem <- 1
 		//first contact does not respond, remove it and add update at the tail
 		if err != nil {
 			bucket.RemoveContact(first.NodeID)
@@ -406,11 +408,11 @@ func (k *Kademlia) UpdateContact(update *Contact) {
 	// bucket.PrintBucket()
 
 	k.KbucketList[index] = bucket
-	<- sem
+	<-k.sem
 }
 
 // find the appropriate kbucket for input id
-func (k *Kademlia) FindBucketIndex(nodeId ID) (index int){
+func (k *Kademlia) FindBucketIndex(nodeId ID) (index int) {
 	prefix := k.NodeID.Xor(nodeId).PrefixLen()
 	if prefix == 160 {
 		index = 0
@@ -422,20 +424,20 @@ func (k *Kademlia) FindBucketIndex(nodeId ID) (index int){
 }
 
 // find the k closest contacts in the KbucketList
-func (k *Kademlia) FindCloseNodes(nodeID ID) ([]Contact) {
+func (k *Kademlia) FindCloseNodes(nodeID ID) []Contact {
 	index := k.FindBucketIndex(nodeID)
 
 	bucket := k.KbucketList[index]
 
 	nodes := make([]Contact, 0)
 	// log.Println("finding close nodes ?????>>>>>>>>>>>", index, len(k.KbucketList))
-	sem <- 1
+	k.sem <- 1
 	for i := 0; i < len(bucket.ContactList); i++ {
 		nodes = append(nodes, bucket.ContactList[i])
 	}
 
 	if len(nodes) == 20 {
-		<- sem
+		<-k.sem
 		return nodes
 	}
 
@@ -446,19 +448,19 @@ func (k *Kademlia) FindCloseNodes(nodeID ID) ([]Contact) {
 
 	// the closes bucket is not full, find nodes in other buckets
 	// until there are k nodes or all buckets are searched
-	left := index-1
-	right := index+1
+	left := index - 1
+	right := index + 1
 
 	for { // might need to only return at most k tripels
 
 		if len(nodes) == 20 {
-			<- sem
+			<-k.sem
 			return nodes
 		}
 
 		if left == -1 && right == bucketsCount {
 			// all buckest are searched, just return the nodes
-			<- sem
+			<-k.sem
 			return nodes
 		}
 
@@ -489,7 +491,7 @@ func (k *Kademlia) StoreKeyVal(key ID, val []byte) {
 	copy(copyval, val)
 
 	// store key, val to table
-	semTable <- 1
+	k.semTable <- 1
 	k.Table[CopyID(key)] = copyval
-	<- semTable
+	<-k.semTable
 }
