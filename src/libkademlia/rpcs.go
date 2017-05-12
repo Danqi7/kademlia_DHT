@@ -32,13 +32,13 @@ type PongMessage struct {
 	Sender Contact
 }
 
-func (k *KademliaRPC) Ping(ping PingMessage, pong *PongMessage) error {
+func (ka *KademliaRPC) Ping(ping PingMessage, pong *PongMessage) error {
 	pong.MsgID = CopyID(ping.MsgID)
 	// Specify the sender
-	pong.Sender = k.kademlia.SelfContact
+	pong.Sender = ka.kademlia.SelfContact
 	// Update contact, etc
 	sender := ping.Sender
-	k.kademlia.UpdateContact(&sender)
+	ka.kademlia.UpdateContact(&sender)
 
 	return nil
 }
@@ -58,14 +58,14 @@ type StoreResult struct {
 	Err   error
 }
 
-func (k *KademliaRPC) Store(req StoreRequest, res *StoreResult) error {
-	k.kademlia.StoreKeyVal(req.Key, req.Value)
+func (ka *KademliaRPC) Store(req StoreRequest, res *StoreResult) error {
+	ka.kademlia.StoreKeyVal(req.Key, req.Value)
 
 	res.MsgID = CopyID(req.MsgID)
 	res.Err = nil
 
 	// update contact in bucket
-	k.kademlia.UpdateContact(&req.Sender)
+	ka.kademlia.UpdateContact(&req.Sender)
 
 	return nil
 }
@@ -85,13 +85,13 @@ type FindNodeResult struct {
 	Err   error
 }
 
-func (k *KademliaRPC) FindNode(req FindNodeRequest, res *FindNodeResult) error {
+func (ka *KademliaRPC) FindNode(req FindNodeRequest, res *FindNodeResult) error {
 	res.MsgID = CopyID(req.MsgID)
-	res.Nodes = k.kademlia.FindCloseNodes(req.NodeID)
+	res.Nodes = ka.kademlia.FindCloseNodes(req.NodeID, k)
 	res.Err = nil
 
 	//update sender in the kbucket
-	k.kademlia.UpdateContact(&req.Sender)
+	ka.kademlia.UpdateContact(&req.Sender)
 
 	return nil
 }
@@ -114,12 +114,12 @@ type FindValueResult struct {
 	Err   error
 }
 
-func (k *KademliaRPC) FindValue(req FindValueRequest, res *FindValueResult) error {
+func (ka *KademliaRPC) FindValue(req FindValueRequest, res *FindValueResult) error {
 	// TODO: Implement.
-	val, err := k.kademlia.LocalFindValue(req.Key)
+	val, err := ka.kademlia.LocalFindValue(req.Key)
 	// no val with this key, find close nodes instead
 	if err != nil {
-		res.Nodes = k.kademlia.FindCloseNodes(req.Sender.NodeID)
+		res.Nodes = ka.kademlia.FindCloseNodes(req.Sender.NodeID, k)
 	} else {
 		// val found
 		copyval := make([]byte, len(val))
@@ -131,7 +131,7 @@ func (k *KademliaRPC) FindValue(req FindValueRequest, res *FindValueResult) erro
 	res.Err = nil
 
 	// update the contact in bucket
-	k.kademlia.UpdateContact(&req.Sender)
+	ka.kademlia.UpdateContact(&req.Sender)
 
 	return nil
 }
@@ -149,7 +149,7 @@ type GetVDOResult struct {
 	VDO   VanashingDataObject
 }
 
-func (k *KademliaRPC) GetVDO(req GetVDORequest, res *GetVDOResult) error {
+func (ka *KademliaRPC) GetVDO(req GetVDORequest, res *GetVDOResult) error {
 	// TODO: Implement.
 	return nil
 }
