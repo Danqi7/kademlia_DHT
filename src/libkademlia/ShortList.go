@@ -3,189 +3,249 @@ package libkademlia
 import (
 	"errors"
 	"log"
+	"sort"
 )
 
+type ContactInfo struct {
+	Node 	Contact
+	Status	bool // for isActive
+}
+
 type ShortList struct {
-	Contacts    []Contact
-	Stata       []bool
-	Closest     *Contact
-	NumInactive int
-	sem         chan int
-	capacity    int
+	Contacts    		[]Contact
+	ActiveList  		[]bool
+	TargetID    		ID
+	ClosestNode     	*Contact
+	FirstInactivePos	int // position of the first not yet probed node, if exists
+	Capacity    		int
+	sem         		chan int
 }
 
-func (sl *ShortList) Init(k int) {
+func (sl *ShortList) Init(k int, target ID) {
 	sl.Contacts = make([]Contact, 0, k)
-	sl.Stata = make([]bool, 0, k)
+	sl.ActiveList = make([]bool, 0, k)
+	sl.TargetID = target
+	sl.ClosestNode = nil
+	sl.FirstInactivePos = 0
+	sl.Capacity = k
 	sl.sem = make(chan int, 1)
-	sl.capacity = k
-	sl.Closest = nil
-	sl.NumInactive = 0
 }
 
-func (sl *ShortList) UpdateClosest(position int) bool {
-	if sl.Closest == nil {
-		/////// DEBUG ->
-		log.Printf("UpdateClosest: default case; position: %d; ID: %s\n", position, sl.Contacts[position].NodeID.AsString())
-		/////// <- DEBUG
-		sl.Closest = &sl.Contacts[position]
+// update ClosestNode if the input node is closer
+// return true if ClosestNode is updated
+func (sl *ShortList) UpdateClosest(contact Contact) bool {
+	if sl.ClosestNode == nil {
+		sl.ClosestNode = &contact
 		return true
 	}
-	if sl.Contacts[position].NodeID.Compare(sl.Closest.NodeID) <= 0 {
-		/////// DEBUG ->
-		log.Printf("UpdateClosest: real update: position: %d; ID: %s\n", position, sl.Contacts[position].NodeID.AsString())
-		/////// <- DEBUG
-		sl.Closest = &sl.Contacts[position]
+	closestDistance := sl.TargetID.Xor(sl.ClosestNode.NodeID)
+	currentDistance := sl.TargetID.Xor(contact.NodeID)
+
+	if currentDistance.Less(closestDistance) {
+		sl.ClosestNode = &contact
 		return true
 	}
-	/////// DEBUG ->
-	log.Printf("UpdateClosest: failed to update: position: %d; ID: %s\n", position, sl.Contacts[position].NodeID.AsString())
-	/////// <- DEBUG
+
 	return false
 }
 
-func (sl *ShortList) Add(c Contact) bool {
-	var isClosestChanged bool = false
-	sl.sem <- 1
-	contactLength := len(sl.Contacts)
-	modifyPosition := -1
-	// check for replacement and existing
-	for i := 0; i < contactLength; i++ {
-		if modifyPosition == -1 && c.NodeID.Compare(sl.Contacts[i].NodeID) < 0 {
-			modifyPosition = i
-		} else if c.NodeID.Equals(sl.Contacts[i].NodeID) {
-			<-sl.sem
+
+// add input contact to ShortList if
+// and ShortList doesn't contain the input contact
+func (sl *ShortList) AddContact(contact Contact) bool {
+
+	// check if the contact is already in the ShortList
+	for _, node := range sl.Contacts {
+		if contact.NodeID.Equals(node.NodeID) {
 			return false
 		}
 	}
-	// at capacity
-	if contactLength == sl.capacity {
-		// cannot replace anything
-		if modifyPosition == -1 {
-			/////// DEBUG ->
-			log.Printf("Add: at capacity and cannot replace anything. ID of the attempted: %s\n", c.NodeID.AsString())
-			/////// <- DEBUG
-			<-sl.sem
-			return false
-		} else {
-			// can replace something
-			/////// DEBUG ->
-			log.Printf("Add: updating ID: %s with ID: %s\n", sl.Contacts[modifyPosition].NodeID.AsString, c.NodeID.AsString())
-			/////// <- DEBUG
-			// replace the far one and mark it as active
-			sl.Contacts[modifyPosition] = c
-			if sl.Stata[modifyPosition] == true {
-				sl.NumInactive++
-			}
-			sl.Stata[modifyPosition] = false
-			isClosestChanged = sl.UpdateClosest(modifyPosition)
-			<-sl.sem
-			return isClosestChanged
-		}
-	}
 
-	// add at the tail
-	/////// DEBUG ->
-	log.Printf("Add: adding ID: %s\n", c.NodeID.AsString())
-	/////// <- DEBUG
-	sl.Contacts = append(sl.Contacts, c)
-	sl.Stata = append(sl.Stata, false)
-	sl.NumInactive++
-	isClosestChanged = sl.UpdateClosest(len(sl.Contacts) - 1)
-	<-sl.sem
-	log.Printf("Add: added; sl length: %d\n", len(sl.Contacts))
-	return isClosestChanged
-}
-
-func (sl *ShortList) AddAlpha(cs []Contact, a int) bool {
-	size := len(cs)
-	if len(cs) == 0 {
+	// check if ShortList is full
+	if len(sl.Contacts) >= sl.Capacity {
 		return false
 	}
-	if size > a {
-		size = a
-	}
-	isClosestChanged := false
-	for i := 0; i < size; i++ {
-		/////// DEBUG ->
-		log.Printf("AddAlpha: adding %d of %d\n", i+1, size)
-		/////// <- DEBUG
-		// add the contact to the short list
-		isClosestChanged = (sl.Add(cs[i]) || isClosestChanged)
-	}
+
+	// add the new contact to the ShortList
+	// mark it as inactive
+	sl.Contacts = append(sl.Contacts, contact)
+	sl.ActiveList = append(sl.ActiveList, false)
+
+	// update the closestNode if possible, now assume update everytime new contact added
+	isClosestChanged := sl.UpdateClosest(contact)
+
+	log.Println("AddContact closestUpdated: ", isClosestChanged)
+
 	return isClosestChanged
 }
 
-func (sl *ShortList) RemoveContact(c Contact) error {
+// Replace inactive contact at pos with newContact,
+// Assume newContact is closer than the inactive contact
+func (sl *ShortList) ReplaceInactiveContact(pos int, contact Contact) bool {
+	// check if the contact is already in the ShortList
+	// if already in, simply return
+	for _, node := range sl.Contacts {
+		if contact.NodeID.Equals(node.NodeID) {
+			return false
+		}
+	}
+
+	// try to replace active contact in shortlist, error!
+	if sl.ActiveList[pos] {
+		log.Fatal("Trying to replace active contact in shortlist, active contact: ", sl.Contacts[pos])
+	}
+
+	// replace
+	sl.Contacts[pos] = contact
+	// update the closestNode if possible, now assume update everytime new contact added
+	isClosestChanged := sl.UpdateClosest(contact)
+
+	return isClosestChanged
+}
+
+// Bulk-add input contacts; input contacts are already sorted
+// Need to sort inactive ShortList.Contacts first
+func (sl *ShortList) AddContacts(contacts []Contact) bool {
+	var isClosestChanged bool = false
 	sl.sem <- 1
-	i := 0
 	size := len(sl.Contacts)
-	for ; i < size; i++ {
-		if c.NodeID.Equals(sl.Contacts[i].NodeID) {
-			if sl.Stata[i] == false {
-				sl.NumInactive--
+	index := 0
+	i := sl.FirstInactivePos
+
+	// sort input contacts by distance
+	sort.Slice(contacts, func(i, j int) bool {
+		c1 := contacts[i]
+		c2 := contacts[j]
+
+		d1 := sl.TargetID.Xor(c1.NodeID)
+		d2 := sl.TargetID.Xor(c2.NodeID)
+
+		return d1.Less(d2)
+	})
+
+	// sort inactive contacts in ShortList by distance
+	// tips: changing sub-slice changes the orginal slice
+	inactive := sl.Contacts[sl.FirstInactivePos:]
+	sort.Slice(inactive, func (i, j int) bool {
+		c1 := inactive[i]
+		c2 := inactive[j]
+
+		d1 := sl.TargetID.Xor(c1.NodeID)
+		d2 := sl.TargetID.Xor(c2.NodeID)
+
+		return d1.Less(d2)
+	})
+
+	// compare input contacts with inactive contacts
+	// replace inactive contacts if input contact is closer
+	for ; i < size && index < len(contacts); {
+		inactiveContact := sl.Contacts[i]
+		contact := contacts[index]
+		inactiveDist := sl.TargetID.Xor(inactiveContact.NodeID)
+		dist := sl.TargetID.Xor(contact.NodeID)
+
+		// if closer, replace the inactiveContact with the current input contact
+		if dist.Less(inactiveDist) {
+			isClosestChanged = sl.ReplaceInactiveContact(i, contact)
+			i += 1
+			index += 1
+		} else {
+			// try replace the next inactive node, which are farther than ith inactive
+			i += 1
+		}
+	}
+
+	// still has spot in shortlist
+	for size < sl.Capacity && index < len(contacts) {
+		// add rest input contacts，if any
+		isClosestChanged = sl.AddContact(contacts[index])
+		index += 1
+		size += 1
+	}
+
+	log.Println("AddContacts finished: ")
+	<- sl.sem
+	return isClosestChanged
+}
+
+// add input contacts to shortlist
+// return true if closestNode is changed
+// func (sl *ShortList) AddAlpha(contacts []Contact, alpha int) bool {
+// 	size := len(contacts)
+// 	if len(contacts) == 0 {
+// 		return false
+// 	}
+// 	if size > alpha {
+// 		size = a
+// 	}
+//
+// 	isClosestChanged := false
+// 	for i := 0; i < size; i++ {
+// 		// add the contact to the short list
+// 		isClosestChanged = (sl.Add(contacts[i]) || isClosestChanged)
+// 	}
+// 	return isClosestChanged
+// }
+
+// Remove inactive contact from ShortList
+// Return error if contact is not found in ShortList or trying to remove active contact
+func (sl *ShortList) RemoveContact(contact Contact) error {
+	sl.sem <- 1
+	size := len(sl.Contacts)
+	for i := 0; i < size; i++ {
+		if contact.NodeID.Equals(sl.Contacts[i].NodeID) {
+			if sl.ActiveList[i] == true {
+				errors.New("Trying to remove active ID: " + contact.NodeID.AsString())
 			}
 			sl.Contacts = append(sl.Contacts[:i], sl.Contacts[i+1:]...)
-			sl.Stata = append(sl.Stata[:i], sl.Stata[i+1:]...)
+			sl.ActiveList = append(sl.ActiveList[:i], sl.ActiveList[i+1:]...)
 			<-sl.sem
 			return nil
 		}
 	}
 	<-sl.sem
-	return errors.New("ID " + c.NodeID.AsString() + " not found among ShortList contacts (RemoveContact)")
+	return errors.New("ID " + contact.NodeID.AsString() + " not found among ShortList contacts (RemoveContact)")
 }
 
-func (sl *ShortList) GetNextAlphaInactive(a int) []Contact {
+func (sl *ShortList) GetInactiveContacts(num int) []Contact {
 	sl.sem <- 1
-	/////// DEBUG ->
-	log.Printf("GetNextAlphaInactive: starting... alpha = %d, contacts size = %d\n", a, len(sl.Contacts))
-	/////// <- DEBUG
-	if len(sl.Contacts) == 0 {
-		<-sl.sem
-		/////// DEBUG ->
-		log.Printf("GetNextAlphaInactive: sl.contacts is empty... returning\n")
-		/////// <- DEBUG
-		return nil
+
+	contacts := make([]Contact, 0)
+	for i := sl.FirstInactivePos; i < len(sl.Contacts) && len(contacts) < num; i++ {
+		contacts = append(contacts, sl.Contacts[i])
 	}
-	cs := make([]Contact, 0)
-	size := len(sl.Contacts)
-	if size > a {
-		size = a
-	}
-	for i := 0; i < size; i++ {
-		/////// DEBUG ->
-		log.Printf("GetNextAlphaInactive: checking position %d: %t - ID: %s\n", i, sl.Stata[i], sl.Contacts[i].NodeID.AsString())
-		/////// <- DEBUG
-		if sl.Stata[i] == false {
-			/////// DEBUG ->
-			log.Printf("GetNextAlphaInactive: found @ position %d: %t\n", i, sl.Stata[i])
-			/////// <- DEBUG
-			cs = append(cs, sl.Contacts[i])
-			if len(cs) == a {
-				/////// DEBUG ->
-				log.Printf("GetNextAlphaInactive: cs has enough length: %s\n", len(cs))
-				/////// <- DEBUG
-				<-sl.sem
-				return cs
-			}
-		}
-	}
+
 	<-sl.sem
-	return cs
+	return contacts
 }
 
 func (sl *ShortList) MarkContactAsActive(c Contact) error {
 	sl.sem <- 1
-	i := 0
-	size := len(sl.Contacts)
-	for ; i < size; i++ {
+
+	for i := 0; i < len(sl.Contacts); i++ {
 		if sl.Contacts[i].NodeID.Equals(c.NodeID) {
-			sl.Stata[i] = true
-			sl.NumInactive--
+			if sl.ActiveList[i] == true {
+				log.Println("Trying to mark active contact as active; might be a parallel problem ...")
+			} else {
+				sl.ActiveList[i] = true
+				sl.FirstInactivePos += 1
+			}
+
 			<-sl.sem
 			return nil
 		}
 	}
+
 	<-sl.sem
 	return errors.New("ID " + c.NodeID.AsString() + " not found among ShortList contacts (MarkContactAsActive)")
+}
+
+// Get the number of inactive contacts count in ShortList
+func (sl *ShortList) GetInactiveCount() int {
+	sl.sem <- 1
+
+	count := len(sl.Contacts) - sl.FirstInactivePos
+
+	<-sl.sem
+	return count
 }

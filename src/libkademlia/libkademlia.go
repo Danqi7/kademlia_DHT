@@ -11,7 +11,8 @@ import (
 	"net/http"
 	"net/rpc"
 	"strconv"
-	"time"
+	//"time"
+	//"sort"
 )
 
 const (
@@ -364,7 +365,7 @@ func (ka *Kademlia) LocalFindValue(searchKey ID) ([]byte, error) {
 	return []byte(""), &FindLocalValError{"Can't find the value in the local"}
 }
 
-type ReturnedContact struct {
+type ReturnedContacts struct {
 	Contacts []Contact
 	Source   Contact
 }
@@ -386,131 +387,123 @@ type ReturnedContact struct {
  */
 
 // For project 2!
-func (ka *Kademlia) ReachOutForContact(channel chan ReturnedContact, c Contact, id ID) {
-	// acquire contacts
+func (ka *Kademlia) ReachOutForContacts(returnedContactsCh chan ReturnedContacts, c Contact, id ID) {
+	// acquire local closest contacts
 	contacts, err := ka.DoFindNode(&c, id)
-	var res ReturnedContact
+	log.Println("eachOutForContacts..")
+	var res ReturnedContacts
 	if err != nil {
 		res.Contacts = nil
 	} else {
+		// remove itself from ReturnedContacts
+		for i, con := range contacts {
+			if con.NodeID.Equals(ka.NodeID) {
+				contacts = append(contacts[:i], contacts[i+1:]...)
+				break
+			}
+		}
+		
 		res.Contacts = contacts
 	}
 	res.Source = c
-	channel <- res
+
+	returnedContactsCh <- res
 }
 
-func (ka *Kademlia) IterativeFindSingleCycle(sl *ShortList, id ID, a int) bool {
-
-	/////// DEBUG ->
-	log.Printf("IterativeFindSingleCycle: starting...\n")
-	/////// <- DEBUG
-
-	nextAlpha := sl.GetNextAlphaInactive(a)
-	if nextAlpha == nil {
-		/////// DEBUG ->
-		log.Printf("IterativeFindSingleCycle: no more inactive; returning\n")
-		/////// <- DEBUG
+// Assume DoFindNode always returnss
+func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int) bool {
+	contacts := sl.GetInactiveContacts(num)
+	log.Println("FindNodeCycle inactiveContact:", len(contacts))
+	// no inactive contacts so far, just return false
+	if contacts == nil {
 		return false
 	}
-	returnedContacts := make(chan ReturnedContact)
-	traverseEnd := len(nextAlpha)
-	/////// DEBUG ->
-	log.Printf("IterativeFindSingleCycle: going to call %d contact to get more contacts\n", traverseEnd)
-	/////// <- DEBUG
-	for i := 0; i < traverseEnd; i++ {
-		go ka.ReachOutForContact(returnedContacts, nextAlpha[i], id)
-		// wait for 300 milliseconds
-		time.Sleep(300 * time.Millisecond)
+
+	returnedContactsCh := make(chan ReturnedContacts)
+	size := len(contacts)
+
+	for i := 0; i < size; i++ {
+		go ka.ReachOutForContacts(returnedContactsCh, contacts[i], id)
 	}
-	// The node then fills the shortlist with contacts from the replies received
-	var rc ReturnedContact
-	var isCycleInchingCloser bool = false
-	for i := 0; i < traverseEnd; i++ {
-		rc = <-returnedContacts
-		/////// DEBUG ->
-		log.Printf("IterativeFindSingleCycle: processing returned contact\n")
-		/////// <- DEBUG
-		if rc.Contacts == nil {
-			/////// DEBUG ->
-			log.Printf("IterativeFindSingleCycle: contact did not respond, removing (ID: %s)\n", rc.Source.NodeID.AsString())
-			/////// <- DEBUG
-			sl.RemoveContact(rc.Source)
+
+	// wait some time for all ReachOutForContacts to finish
+	// go func() {
+	// 	time.Sleep(300 * time.Millisecond)
+	// 	timeout := make(chan bool)
+	// 	timeout <- true
+	// }()
+
+	// for each returnedContact, update shortlist,
+	// and either mark source active or remove it
+	closestUpdated := false
+	for i := 0; i < size; i++ {
+		res := <-returnedContactsCh
+		if res.Contacts == nil {
+			// remove non-responding contact from shortlist
+			sl.RemoveContact(res.Source)
 		} else {
-			/////// DEBUG ->
-			log.Printf("IterativeFindSingleCycle: contact responded; marking as active (ID: %s). Returned %d contacts \n", rc.Source.NodeID.AsString(), len(rc.Contacts))
-			/////// <- DEBUG
-			sl.MarkContactAsActive(rc.Source)
-			isCycleInchingCloser = (isCycleInchingCloser || sl.AddAlpha(rc.Contacts, len(rc.Contacts)))
+			sl.MarkContactAsActive(res.Source)
+			closestUpdated = (closestUpdated || sl.AddContacts(res.Contacts))
 		}
 	}
-	/////// DEBUG ->
-	log.Printf("IterativeFindSingleCycle: about to return... are we closer to key ID? %t; Length of Contact list: %d\n", isCycleInchingCloser, len(sl.Contacts))
-	/////// <- DEBUG
-	return isCycleInchingCloser
+
+	log.Println("FindNodeCycle closestUpdated: ", closestUpdated)
+	return closestUpdated
 }
 
+// iteratively find closest k contacts
+// TODO: and print out some nice formatted info
 func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
-
-	var err error
-	/////// DEBUG ->
-	log.Printf("DoIterativeFindNode: START looking for: %s\n", id.AsString())
-	/////// <- DEBUG
-
+	log.Println("yoooo!")
 	// initialize an empty ShortList
 	var sl ShortList
-	sl.Init(k)
+	sl.Init(k, id)
 
-	// ITERATION
-	// select 3 (alpha) contacts
+	// only select alpha number of contacts
+	// realSize might be less than alpha
 	foundContacts := ka.FindCloseNodes(id, alpha)
-	/////// DEBUG ->
-	log.Printf("DoIterativeFindNode: first run; closest contacts: %d\n", len(foundContacts))
-	for i := 0; i < len(foundContacts); i++ {
-		log.Printf("- Returned ID: %s\n", foundContacts[i].NodeID.AsString())
+	if len(foundContacts) > alpha {
+		foundContacts = foundContacts[:alpha]
 	}
-	/////// <- DEBUG
+	realSize := len(foundContacts)
+	if realSize == 0 {
+		//NOTE: do we still need to print it?
+		return nil, &ContactNotFoundError{id, "contact found in routing table, abort DoIterativeFindNode"}
+	}
 
-	// keep track of the closest contact of the 3, and add the 3 to the short list
-	if !sl.AddAlpha(foundContacts, alpha) {
-		/////// DEBUG ->
-		log.Printf("DoIterativeFindNode: Cannot find anything... quitting...\n")
-		/////// <- DEBUG
-		return nil, err
-	}
+	// add to shortlist
+	isClosestChanged :=  sl.AddContacts(foundContacts)
 
 	// The sequence of parallel searches is continued until either
 	// 1. no node in the sets returned is closer than the closest node already seen or
 	// 2. the initiating node has accumulated k probed and known to be active contacts.
-	var isClosestChanged bool = true
-	for isClosestChanged == true && (len(sl.Contacts) < k || sl.NumInactive > 0) {
-
-		/////// DEBUG ->
-		log.Printf("DoIterativeFindNode: enter another iteration.\n")
-		for i := 0; i < len(foundContacts); i++ {
-			log.Printf("- Currently available ID: %s\n", foundContacts[i].NodeID.AsString())
-		}
-		/////// <- DEBUG
+	for isClosestChanged == true && sl.GetInactiveCount() != 0 {
+		log.Println("sl.FirstInactivePos: ", sl.FirstInactivePos)
+		log.Println("len(sl.Contacts): ", len(sl.Contacts))
 
 		// sends parallel, asynchronous FIND_* RPCs to the alpha contacts in the shortlist
-		isClosestChanged = ka.IterativeFindSingleCycle(&sl, id, alpha)
+		isClosestChanged = ka.FindNodeCycle(&sl, id, alpha)
 
 		// if closestNode is unchanged,
 		// then the initiating node sends a FIND_* RPC to each of the k closest nodes
 		// that it has not already queried.
 		if !isClosestChanged {
-			/////// DEBUG ->
-			log.Printf("DoIterativeFindNode: closest did not change... entering cycle end spam\n")
-			/////// <- DEBUG
-			isClosestChanged = ka.IterativeFindSingleCycle(&sl, id, sl.NumInactive)
+			numInactive := sl.GetInactiveCount()
+			isClosestChanged = ka.FindNodeCycle(&sl, id, numInactive)
 		}
 	}
 
-	/////// DEBUG ->
-	log.Printf("DoIterativeFindNode: Grand Return\n")
-	for i := 0; i < len(sl.Contacts); i++ {
-		log.Printf("- Contact ID: %s\n", sl.Contacts[i].NodeID.AsString())
+	log.Println("sl.FirstInactivePos: ", sl.FirstInactivePos)
+
+	res := ""
+	for _, con := range sl.Contacts {
+		res += "NodeID = " + con.NodeID.AsString() + "\n"
+		res += "Host = " + con.Host.String() + "\n"
+		res += "Port = " + strconv.Itoa(int(con.Port))
+		res += "-------------\n"
 	}
-	/////// <- DEBUG
+
+	log.Println(res)
 
 	return sl.Contacts, nil
 }
@@ -596,7 +589,7 @@ func (ka *Kademlia) FindCloseNodes(nodeID ID, numNodes int) []Contact {
 	bucket := ka.KbucketList[index]
 
 	nodes := make([]Contact, 0)
-	// log.Println("finding close nodes ?????>>>>>>>>>>>", index, len(ka.KbucketList))
+	log.Println("Calling FindCloseNodes by: ", ka.SelfContact.Port)
 	ka.sem <- 1
 	for i := 0; i < len(bucket.ContactList); i++ {
 		nodes = append(nodes, bucket.ContactList[i])
@@ -607,24 +600,18 @@ func (ka *Kademlia) FindCloseNodes(nodeID ID, numNodes int) []Contact {
 		return nodes
 	}
 
-	// for _, val := range ka.KbucketList {
-	// 	val.PrintBucket()
-	// }
-	// log.Println("finding close nodes ?????>>>>>>>>>>>", ka.NodeID)
-
 	// the closes bucket is not full, find nodes in other buckets
 	// until there are k nodes or all buckets are searched
-	left := index - 1
-	right := index + 1
+	var left int = index - 1
+	var right int = index + 1
 
 	for { // might need to only return at most k tripels
-
 		if len(nodes) >= numNodes {
 			<-ka.sem
 			return nodes
 		}
 
-		if left == -1 && right == bucketsCount {
+		if left <= -1 && right >= bucketsCount {
 			// all buckest are searched, just return the nodes
 			<-ka.sem
 			return nodes
