@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"strconv"
-	//"time"
+	"time"
 	//"sort"
 )
 
@@ -411,12 +411,13 @@ func (ka *Kademlia) ReachOutForContacts(returnedContactsCh chan ReturnedContacts
 }
 
 // Assume DoFindNode always returnss
-func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int) bool {
+func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int, timeout chan bool, closestUpdatedCh chan bool) {
 	contacts := sl.GetInactiveContacts(num)
 	log.Println("FindNodeCycle inactiveContact:", len(contacts))
 	// no inactive contacts so far, just return false
 	if contacts == nil {
-		return false
+		closestUpdatedCh <- false
+		return
 	}
 
 	returnedContactsCh := make(chan ReturnedContacts)
@@ -426,12 +427,11 @@ func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int) bool {
 		go ka.ReachOutForContacts(returnedContactsCh, contacts[i], id)
 	}
 
-	// wait some time for all ReachOutForContacts to finish
-	// go func() {
-	// 	time.Sleep(300 * time.Millisecond)
-	// 	timeout := make(chan bool)
-	// 	timeout <- true
-	// }()
+	// wait some time before send out next round of cycle
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		timeout <- true
+	}()
 
 	// for each returnedContact, update shortlist,
 	// and either mark source active or remove it
@@ -448,7 +448,8 @@ func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int) bool {
 	}
 
 	log.Println("FindNodeCycle closestUpdated: ", closestUpdated)
-	return closestUpdated
+	closestUpdatedCh <- closestUpdated
+	return
 }
 
 // iteratively find closest k contacts
@@ -472,27 +473,30 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 	}
 	log.Println("returning from FindCloseNodes, with ", realSize)
 	// add to shortlist
-	isClosestChanged :=  sl.AddContacts(foundContacts)
+	sl.AddContacts(foundContacts)
 
 	// The sequence of parallel searches is continued until either
 	// 1. no node in the sets returned is closer than the closest node already seen or
 	// 2. the initiating node has accumulated k probed and known to be active contacts.
-	for isClosestChanged == true && sl.GetInactiveCount() != 0 {
-		log.Println("len(sl.ContactInfos): ", len(sl.ContactInfos))
+	isClosestChangedCh := make(chan bool)
+	timeout := make(chan bool)
+	go ka.FindNodeCycle(&sl, id, alpha, timeout, isClosestChangedCh)
 
-		// sends parallel, asynchronous FIND_* RPCs to the alpha contacts in the shortlist
-		isClosestChanged = ka.FindNodeCycle(&sl, id, alpha)
-
-		// if closestNode is unchanged,
-		// then the initiating node sends a FIND_* RPC to each of the k closest nodes
-		// that it has not already queried.
-		if !isClosestChanged {
-			numInactive := sl.GetInactiveCount()
-			isClosestChanged = ka.FindNodeCycle(&sl, id, numInactive)
+	for sl.GetInactiveCount() != 0{
+		select {
+		case isClosestChanged := <- isClosestChangedCh:
+			if isClosestChanged {
+				go ka.FindNodeCycle(&sl, id, alpha, timeout, isClosestChangedCh)
+			} else {
+				numInactive := sl.GetInactiveCount()
+				go ka.FindNodeCycle(&sl, id, numInactive, timeout, isClosestChangedCh)
+			}
+		case <-timeout: // after 300ms, fire the next round of cycle
+			go ka.FindNodeCycle(&sl, id, alpha, timeout, isClosestChangedCh)
 		}
 	}
 
-	res := "\n"
+	res := "\nTotal contacts number: " + strconv.Itoa(len(sl.ContactInfos)) + "\n"
 	contacts := make([]Contact, 0)
 	for _, coninfo := range sl.ContactInfos {
 		con := coninfo.Node
