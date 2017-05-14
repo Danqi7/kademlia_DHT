@@ -389,8 +389,8 @@ type ReturnedContacts struct {
 // For project 2!
 func (ka *Kademlia) ReachOutForContacts(returnedContactsCh chan ReturnedContacts, c Contact, id ID) {
 	// acquire local closest contacts
+	log.Println("ReachOutForContacts...")
 	contacts, err := ka.DoFindNode(&c, id)
-	log.Println("eachOutForContacts..")
 	var res ReturnedContacts
 	if err != nil {
 		res.Contacts = nil
@@ -402,7 +402,7 @@ func (ka *Kademlia) ReachOutForContacts(returnedContactsCh chan ReturnedContacts
 				break
 			}
 		}
-		
+
 		res.Contacts = contacts
 	}
 	res.Source = c
@@ -470,7 +470,7 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 		//NOTE: do we still need to print it?
 		return nil, &ContactNotFoundError{id, "contact found in routing table, abort DoIterativeFindNode"}
 	}
-
+	log.Println("returning from FindCloseNodes, with ", realSize)
 	// add to shortlist
 	isClosestChanged :=  sl.AddContacts(foundContacts)
 
@@ -478,8 +478,7 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 	// 1. no node in the sets returned is closer than the closest node already seen or
 	// 2. the initiating node has accumulated k probed and known to be active contacts.
 	for isClosestChanged == true && sl.GetInactiveCount() != 0 {
-		log.Println("sl.FirstInactivePos: ", sl.FirstInactivePos)
-		log.Println("len(sl.Contacts): ", len(sl.Contacts))
+		log.Println("len(sl.ContactInfos): ", len(sl.ContactInfos))
 
 		// sends parallel, asynchronous FIND_* RPCs to the alpha contacts in the shortlist
 		isClosestChanged = ka.FindNodeCycle(&sl, id, alpha)
@@ -493,10 +492,11 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 		}
 	}
 
-	log.Println("sl.FirstInactivePos: ", sl.FirstInactivePos)
-
-	res := ""
-	for _, con := range sl.Contacts {
+	res := "\n"
+	contacts := make([]Contact, 0)
+	for _, coninfo := range sl.ContactInfos {
+		con := coninfo.Node
+		contacts = append(contacts, con)
 		res += "NodeID = " + con.NodeID.AsString() + "\n"
 		res += "Host = " + con.Host.String() + "\n"
 		res += "Port = " + strconv.Itoa(int(con.Port))
@@ -505,7 +505,7 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 
 	log.Println(res)
 
-	return sl.Contacts, nil
+	return contacts, nil
 }
 
 func (ka *Kademlia) DoIterativeStore(key ID, value []byte) ([]Contact, error) {
@@ -546,9 +546,7 @@ func (ka *Kademlia) UpdateContact(update *Contact) {
 	ka.sem <- 1
 	index := ka.FindBucketIndex(update.NodeID)
 	bucket := ka.KbucketList[index]
-	// log.Println("before, NodeID:", ka.NodeID)
-	// bucket.PrintBucket()
-	// log.Println("updating...")
+	log.Println("updating contact: ", update)
 	err := bucket.Update(*update)
 	//bucket is full
 	if err != nil {
@@ -563,10 +561,11 @@ func (ka *Kademlia) UpdateContact(update *Contact) {
 			bucket.AddContact(*update)
 		}
 	}
-	// log.Println("After")
-	// bucket.PrintBucket()
 
 	ka.KbucketList[index] = bucket
+
+	// log.Println("After updating, Routing Table:")
+	// ka.PrintKbucketList()
 	<-ka.sem
 }
 
@@ -591,6 +590,7 @@ func (ka *Kademlia) FindCloseNodes(nodeID ID, numNodes int) []Contact {
 	nodes := make([]Contact, 0)
 	log.Println("Calling FindCloseNodes by: ", ka.SelfContact.Port)
 	ka.sem <- 1
+	ka.PrintKbucketList()
 	for i := 0; i < len(bucket.ContactList); i++ {
 		nodes = append(nodes, bucket.ContactList[i])
 	}
