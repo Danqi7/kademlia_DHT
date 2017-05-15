@@ -312,7 +312,8 @@ func (ka *Kademlia) DoFindValue(contact *Contact,
 
 	client, err := rpc.DialHTTPPath("tcp", address, path)
 	if err != nil {
-		log.Fatal("Dialing: ", err, address)
+		// log.Fatal("Dialing: ", err, address)
+		return nil, nil, errors.New("Failed to dial address: " + address)
 	}
 
 	request := new(FindValueRequest)
@@ -482,9 +483,9 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 	timeout := make(chan bool)
 	go ka.FindNodeCycle(&sl, id, alpha, timeout, isClosestChangedCh)
 
-	for sl.GetInactiveCount() != 0{
+	for sl.GetInactiveCount() != 0 {
 		select {
-		case isClosestChanged := <- isClosestChangedCh:
+		case isClosestChanged := <-isClosestChangedCh:
 			if isClosestChanged {
 				go ka.FindNodeCycle(&sl, id, alpha, timeout, isClosestChangedCh)
 			} else {
@@ -513,7 +514,18 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 }
 
 func (ka *Kademlia) DoIterativeStore(key ID, value []byte) ([]Contact, error) {
-	return nil, &CommandFailed{"Not implemented"}
+
+	foundContacts, err := ka.DoIterativeFindNode(key)
+	if err != nil {
+		return nil, err
+	}
+
+	// everything is assumed to be alive
+	for i, c := range foundContacts {
+		DoStore(c, key, value)
+	}
+
+	return foundContacts, nil
 }
 func (ka *Kademlia) DoIterativeFindValue(key ID) (value []byte, err error) {
 	return nil, &CommandFailed{"Not implemented"}
