@@ -4,10 +4,18 @@ import (
 	//"fmt"
     "log"
 	//"net"
+    "bytes"
 	"testing"
     "strconv"
 )
 
+/**
+ * Explanation:
+ * This function tests DoIterativeFindNode; make instance1 only knows instance2
+ * and instance2 knows everyone in the graph so instance1 should fail to find instance3
+ * when uses local FindNode, but instance1 should be able to find instance3 by using DoIterativeFindNode
+ * Here A is instance1, B is instance2
+ */
 func TestIterativeFindNode(t *testing.T) {
     // tree structure;
 	// A->B->tree
@@ -43,7 +51,7 @@ func TestIterativeFindNode(t *testing.T) {
     } else {
         for _, c := range contacts {
             if c.NodeID.Equals(instance3.NodeID) {
-                t.Error("instacen1, localhost:7000, trying to find localhost:7002 should fail")
+                t.Error("instacen1, localhost:7000, trying to find instance3, localhost:7002, should fail")
             }
         }
     }
@@ -52,6 +60,85 @@ func TestIterativeFindNode(t *testing.T) {
     contacts, _ = instance1.DoIterativeFindNode(instance3.NodeID)
     if contacts == nil {
         t.Error("iterativeFindNode has found zero contacts")
+    }
+
+    return
+}
+
+/**
+ * Explanation:
+ * This function tests DoIterativeStore; make instance1 only knows instance2
+ * and instance2 knows everyone in the graph; everyone should fail to find the key & value
+ * before instance1 do the iterativeStore; after the iterativeStore, the number of nodes that store
+ * the key & value should equal to the number of nodes that iterativeFindNode has found
+ * Here A is instance1, B is instance2
+ */
+func TestIterativeStore(t *testing.T) {
+    // tree structure;
+    // A->B->tree
+    /*
+             C
+          /
+      A-B -- D
+          \
+             E
+    */
+    instance1 := NewKademlia("localhost:7013")
+    instance2 := NewKademlia("localhost:7014")
+    host_number1, port_number1, _ := StringToIpPort("localhost:7013")
+    instance2.DoPing(host_number1, port_number1)
+
+    tree_node := make([]*Kademlia, 5)
+	for i := 0; i < 5; i++ {
+		address := "localhost:" + strconv.Itoa(7015+i)
+		tree_node[i] = NewKademlia(address)
+		host_number, port_number, _ := StringToIpPort(address)
+		instance2.DoPing(host_number, port_number)
+	}
+
+    key := NewRandomID()
+    value := []byte("Hello World")
+
+    // LocalFindValue on those nodes should fail, producing an not-found error
+    for _, node := range tree_node {
+        _, err := node.LocalFindValue(key)
+        if err == nil {
+            t.Error("LocalFindValue on nodes should fail before the iterativeStore")
+        }
+    }
+    contacts, err := instance1.DoIterativeStore(key, value)
+
+    if err != nil {
+        t.Error("DoIterativeStore error" + err.Error())
+    }
+
+    // the number of foundContacts should equal to the numebr
+    // of contacts that can find the value after the iterativeStore
+    cnt := 0
+    storedValue, err := instance2.LocalFindValue(key)
+    if err == nil {
+        if !bytes.Equal(storedValue, value) {
+    		t.Error("Stored value did not match found value")
+    	}
+        cnt += 1
+    }
+
+    for _, node := range tree_node {
+        storedValue, err = node.LocalFindValue(key)
+        if err == nil {
+            if !bytes.Equal(storedValue, value) {
+        		t.Error("Stored value did not match found value")
+        	}
+            cnt += 1
+        }
+    }
+
+    if cnt != len(contacts) {
+        t.Error("Every found contact should store the value")
+    }
+
+    if cnt <= 0 {
+        t.Error("At least one contact should have stored the key & value")
     }
 
     return
