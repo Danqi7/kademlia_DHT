@@ -510,7 +510,7 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 		res += "NodeID = " + con.NodeID.AsString() + "\n"
 		res += "Host = " + con.Host.String() + "\n"
 		res += "Port = " + strconv.Itoa(int(con.Port))
-		res += "-------------\n"
+		res += "-------------------------------------\n"
 	}
 
 	log.Println(res)
@@ -531,8 +531,125 @@ func (ka *Kademlia) DoIterativeStore(key ID, value []byte) ([]Contact, error) {
 
  	return foundContacts, nil
 }
+
+func (ka *Kademlia) ReachOutForContactsValues(returnedContactsCh chan ReturnedContacts, foundValueCh chan []byte, c Contact, id ID) {
+	// acquire local closest contacts
+	log.Println("ReachOutForContactsValues...")
+	val, contacts, err := ka.DoFindValue(&c, id)
+	var res ReturnedContacts
+	if err != nil {
+		res.Contacts = nil
+	} else if val != nil {
+		// FIXME return directly
+		foundValueCh <- val
+		return
+	} else {
+		// remove itself from ReturnedContacts
+		for i, con := range contacts {
+			if con.NodeID.Equals(ka.NodeID) {
+				contacts = append(contacts[:i], contacts[i+1:]...)
+				break
+			}
+		}
+
+		res.Contacts = contacts
+	}
+	res.Source = c
+
+	returnedContactsCh <- res
+}
+
+// Assume DoFindValue always returnss
+func (ka *Kademlia) FindValueCycle(sl *ShortList, id ID, num int, timeout chan bool, closestUpdatedCh chan bool, foundValueCh chan []byte) {
+	contacts := sl.GetInactiveContacts(num)
+	log.Println("FindNodeCycle inactiveContact:", len(contacts))
+	// no inactive contacts so far, just return false
+	if contacts == nil {
+		closestUpdatedCh <- false
+		return
+	}
+
+	returnedContactsCh := make(chan ReturnedContacts)
+	size := len(contacts)
+
+	for i := 0; i < size; i++ {
+		go ka.ReachOutForContactsValues(returnedContactsCh, foundValueCh, contacts[i], id)
+	}
+
+	// wait some time before send out next round of cycle
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		timeout <- true
+	}()
+
+	// for each returnedContact, update shortlist,
+	// and either mark source active or remove it
+	closestUpdated := false
+	for i := 0; i < size; i++ {
+		res := <-returnedContactsCh
+		if res.Contacts == nil {
+			// remove non-responding contact from shortlist
+			sl.RemoveContact(res.Source)
+		} else {
+			sl.MarkContactAsActive(res.Source)
+			closestUpdated = (closestUpdated || sl.AddContacts(res.Contacts))
+		}
+	}
+
+	log.Println("FindNodeCycle closestUpdated: ", closestUpdated)
+	closestUpdatedCh <- closestUpdated
+	return
+}
+
 func (ka *Kademlia) DoIterativeFindValue(key ID) (value []byte, err error) {
-	return nil, &CommandFailed{"Not implemented"}
+	// initialize an empty ShortList
+	var sl ShortList
+	sl.Init(k, key)
+
+	// only select alpha number of contacts
+	// realSize might be less than alpha
+	foundContacts := ka.FindCloseNodes(key, alpha)
+	if len(foundContacts) > alpha {
+		foundContacts = foundContacts[:alpha]
+	}
+	realSize := len(foundContacts)
+	if realSize == 0 {
+		//NOTE: do we still need to print it?
+		return nil, &ContactNotFoundError{key, "contact found in routing table, abort DoIterativeFindNode"}
+	}
+	log.Println("returning from FindCloseNodes, with ", realSize)
+	// add to shortlist
+	sl.AddContacts(foundContacts)
+
+	// The sequence of parallel searches is continued until either
+	// 1. no node in the sets returned is closer than the closest node already seen or
+	// 2. the initiating node has accumulated k probed and known to be active contacts.
+	isClosestChangedCh := make(chan bool)
+	foundValueCh := make(chan []byte)
+	timeout := make(chan bool)
+
+	go ka.FindValueCycle(&sl, key, alpha, timeout, isClosestChangedCh, foundValueCh)
+
+	for sl.GetInactiveCount() != 0 {
+		select {
+		case valueFound := <-foundValueCh:
+			ka.DoStore(sl.ClosestNode, key, valueFound)
+			return valueFound, nil
+		case isClosestChanged := <-isClosestChangedCh:
+			if isClosestChanged {
+				go ka.FindValueCycle(&sl, key, alpha, timeout, isClosestChangedCh, foundValueCh)
+			} else {
+				numInactive := sl.GetInactiveCount()
+				go ka.FindValueCycle(&sl, key, numInactive, timeout, isClosestChangedCh, foundValueCh)
+			}
+		case <-timeout: // after 300ms, fire the next round of cycle
+			go ka.FindValueCycle(&sl, key, alpha, timeout, isClosestChangedCh, foundValueCh)
+		}
+	}
+
+	log.Printf("Fail to find value. Closest node: %s\n", sl.ClosestNode.NodeID.AsString())
+
+	return nil, errors.New(sl.ClosestNode.NodeID.AsString())
 }
 
 /**

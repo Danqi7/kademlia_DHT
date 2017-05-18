@@ -143,3 +143,70 @@ func TestIterativeStore(t *testing.T) {
 
     return
 }
+
+/**
+ * Explanation:
+ * This function tests DoIterativeFindValue; make instance1 only knows instance2
+ * and instance2 knows everyone in the graph; Instance1 should not be able to find
+ * the key & value locallly but should be able to find the key & value when doing iterativeFindValue
+ * Here A is instance1, B is instance2
+ */
+func TestIterativeFindValue(t *testing.T) {
+    // tree structure;
+    // A->B->tree
+    /*
+             C
+          /
+      A-B -- D
+          \
+             E
+    */
+    log.Println("=================TestIterativeFindValue==================")
+    instance1 := NewKademlia("localhost:7020")
+    instance2 := NewKademlia("localhost:7021")
+    instance3 := NewKademlia("localhost:7022")
+    host_number1, port_number1, _ := StringToIpPort("localhost:7020")
+    instance2.DoPing(host_number1, port_number1)
+    host_number3, port_number3, _ := StringToIpPort("localhost:7022")
+    instance2.DoPing(host_number3, port_number3)
+
+    tree_node := make([]*Kademlia, 5)
+	for i := 0; i < 5; i++ {
+		address := "localhost:" + strconv.Itoa(7023+i)
+		tree_node[i] = NewKademlia(address)
+		host_number, port_number, _ := StringToIpPort(address)
+		instance2.DoPing(host_number, port_number)
+	}
+
+    // store key & value in instance3
+    key := NewRandomID()
+    value := []byte("Hello World")
+    contact3, err := instance2.FindContact(instance3.NodeID)
+	if err != nil {
+		t.Error("Instance 3's contact not found in Instance 2's contact list")
+		return
+	}
+    err = instance2.DoStore(contact3, key, value)
+	if err != nil {
+		t.Error("Could not store value")
+	}
+
+    // instance1 FindValue locallly should fail
+    _, err = instance1.LocalFindValue(key)
+    if err == nil {
+        t.Error("Instance1 should not be able to find the key locallly")
+    }
+
+    // iterativeFindValue should succeed
+    res, err := instance1.DoIterativeFindValue(key)
+    if err != nil {
+        t.Error("Instance1 should be able to find the key by using iterativeFindValue")
+    }
+
+    if !bytes.Equal(res, value) {
+        t.Error("found value did not match stored value")
+    }
+
+    return
+
+}
