@@ -72,11 +72,59 @@ func decrypt(key []byte, ciphertext []byte) (text []byte) {
 	return ciphertext
 }
 
-func (k *Kademlia) VanishData(data []byte, numberKeys byte,
+func (ka *Kademlia) VanishData(data []byte, numberKeys byte,
 	threshold byte, timeoutSeconds int) (vdo VanashingDataObject) {
-	return
+
+	// TIMEOUT is currently ignored as it is relevant only in extra credit
+
+	/*
+	 * first start by encrypting the data and creating a ciphertext.
+	 * To create a random cryptographic key (K),
+	 * you can use the provided "GenerateRandomCryptoKey" function.
+	 * To encrypt data, you can use the provided "encrypt" function by
+	 * giving it the random key (K) and text that shoudl be encrypted.
+	 */
+
+	k := GenerateRandomCryptoKey()
+	cypherText := encrypt(k, data)
+
+	/*
+	 * The key, K, should then be broken up into multiple
+	 * Shamir's Secret Shared keys using sss.Split in sss/sss.go.
+	 */
+	sssMap, err := Split(numberKeys, threshold, cypherText)
+	if err != nil {
+		log.Printf("Vanish cannot split key: %d/%d\n", threshold, numberKeys)
+		return nil
+	}
+
+	/*
+	 * Next, these keys need to be stored in the DHT.
+	 * For this step, you need to create an access key (L).
+	 * For this you can use the provided GenerateRandomAccessKey.
+	 * This will be used as the seed to the random psuedo number generator
+	 * that we use to calculate where to store the shared keys in the DHT.
+	 * This step is done for you in the CalculateSharedKeyLocations function.
+	 * Given the same accessKey, this function will return the same sequence
+	 * of N random IDs -- locations in the DHT where the keys should be stored.
+	 * Using your previously implemented Kademlia functionality,
+	 * you should store these shared keys in the network.
+	 */
+
+	l := GenerateRandomAccessKey()
+	ids := CalculateSharedKeyLocations(l, numberKeys)
+	for i := 0; i < numberKeys; i++ {
+		ka.DoIterativeStore(ids[i], sssMap[i])
+	}
+
+	/*
+	 * Finally, after the keys have been stored, you should create and return the VDO.
+	 * Later in this project, you will need to store the VDO locally and serve it via an RPC.
+	 * For now, however, you can save it however you prefer for testing.
+	 */
+	return VanashingDataObject(l, cypherText, numberKeys, threshold)
 }
 
-func (k *Kademlia) UnvanishData(vdo VanashingDataObject) (data []byte) {
+func (ka *Kademlia) UnvanishData(vdo VanashingDataObject) (data []byte) {
 	return nil
 }

@@ -357,6 +357,18 @@ func executeLine(k *libkademlia.Kademlia, line string) (response string) {
 		} else {
 			response = fmt.Sprintf("OK: Found value %s", value)
 		}
+	case toks[0] == "vanish":
+
+		if len(toks) != 5 {
+			response = "usage: vanish [VDO ID] [data] [numberKeys] [threshold]"
+			return
+		}
+		key, vdo := libkademlia.Vanish()
+		if vdo == nil {
+			response = "ERR: unknown error with Vanish"
+		} else {
+			response = "ERR: VanashingDataObject cannot be turned into string; unimplemented"
+		}
 
 	default:
 		response = "ERR: Unknown command"
