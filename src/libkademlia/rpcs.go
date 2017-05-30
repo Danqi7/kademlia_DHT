@@ -6,6 +6,8 @@ package libkademlia
 
 import (
 	"net"
+	"log"
+	"errors"
 )
 
 type KademliaRPC struct {
@@ -151,5 +153,21 @@ type GetVDOResult struct {
 
 func (ka *KademliaRPC) GetVDO(req GetVDORequest, res *GetVDOResult) error {
 	// TODO: Implement.
+	VdoID := req.VdoID
+	//find the vdo in local vdos
+	ka.kademlia.semVdos <- 1
+	vdo, ok := ka.kademlia.Vdos[VdoID]
+	<- ka.kademlia.semVdos
+
+	// fail
+	if ok != true {
+		log.Println("GetVDO Error: Failed to find the VDO locally: ", VdoID.AsString())
+		return errors.New("GetVDO Error: Failed to find the VDO locally: " + VdoID.AsString())
+	}
+
+	// success
+	res.MsgID = CopyID(req.MsgID)
+	res.VDO = vdo
+
 	return nil
 }

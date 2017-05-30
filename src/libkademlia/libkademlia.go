@@ -33,8 +33,10 @@ type Kademlia struct {
 	SelfContact Contact
 	KbucketList []Kbucket
 	Table       map[ID][]byte
+	Vdos		map[ID]VanashingDataObject
 	sem         chan int
 	semTable    chan int
+	semVdos		chan int //semaphore for Vdos
 }
 
 func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
@@ -50,10 +52,13 @@ func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
 	}
 	// init Table
 	ka.Table = make(map[ID][]byte)
+	// init Vdos
+	ka.Vdos = make (map[ID]VanashingDataObject)
 
 	// init ka.semaphores
 	ka.sem = make(chan int, 1)
 	ka.semTable = make(chan int, 1)
+	ka.semVdos = make(chan int, 1)
 
 	// Set up RPC server
 	// NOTE: KademliaRPC is just a wrapper around Kademlia. This type includes
@@ -669,13 +674,84 @@ func (ka *Kademlia) DoIterativeFindValue(key ID) (value []byte, err error) {
  */
 
 // For project 3!
-func (ka *Kademlia) Vanish(data []byte, numberKeys byte,
+func (ka *Kademlia) Vanish(vdoID ID, data []byte, numberKeys byte,
 	threshold byte, timeoutSeconds int) (vdo VanashingDataObject) {
-	return
+
+	// create vdo and sprinkle key shares in its contacts
+	vdo = ka.VanishData(data, numberKeys, threshold, timeoutSeconds)
+
+	// store the created vdo
+	ka.semVdos <- 1
+	ka.Vdos[vdoID] = vdo
+	<- ka.semVdos
+
+	return vdo
+}
+// TODO: don't know what is searchKey here, I assume it's the VDOID; could be wrong
+func (ka *Kademlia) Unvanish(searchKey ID) (data []byte) {
+	//find the vdo in local vdos
+	ka.semVdos <- 1
+	vdo, ok := ka.Vdos[searchKey]
+	<- ka.semVdos
+
+	if ok != true {
+		log.Println("Unvanish Error: Failed to find the VDO locally: ", searchKey.AsString())
+		return nil
+	}
+
+	text := ka.UnvanishData(vdo)
+	return text
 }
 
-func (ka *Kademlia) Unvanish(searchKey ID) (data []byte) {
+// TODO: don't know if this would be useful; this whole assignment is confusing
+// just write it down so later we can just copy and paste into right place
+func (ka *Kademlia) DoUnvanish(NodeID ID, VdoId ID) (data []byte) {
+	// ask for vdo for each conatct
+	foundContacts := ka.FindCloseNodes(NodeID, k)
+	for _, contact := range foundContacts {
+		vdo, err := ka.DoGetVDO(&contact, VdoId)
+
+		if err == nil {
+			text := ka.UnvanishData(vdo)
+
+			if text != nil {
+				return text
+			}
+		}
+	}
+
+	// fail
 	return nil
+}
+
+// TODO: don't know if this would be useful; this whole assignment is confusing
+func (ka *Kademlia) DoGetVDO(contact *Contact, VdoId ID) (VanashingDataObject, error) {
+	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
+	path := rpc.DefaultRPCPath + strconv.Itoa(int(contact.Port))
+
+	client, err := rpc.DialHTTPPath("tcp", address, path)
+	if err != nil {
+		return VanashingDataObject{}, errors.New("Failed to dial address: " + address)
+	}
+
+	request := new(GetVDORequest)
+	request.Sender = ka.SelfContact
+	request.VdoID = VdoId
+	request.MsgID = NewRandomID()
+
+	var result GetVDOResult
+	err = client.Call("KademliaRPC.GetVDO", request, &result)
+	if err != nil {
+		return VanashingDataObject{}, errors.New("GetVDOError: " + err.Error())
+	}
+
+	if result.MsgID.Equals(request.MsgID) {
+		vdo := result.VDO
+		return vdo, nil
+	}
+
+	//MsgID mismatch
+	return VanashingDataObject{}, &MsgIDMismatchError{"MsgID mismatch between request and result for DoGetVDO"}
 }
 
 // update the input contact in the appropriate kbucket

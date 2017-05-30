@@ -358,30 +358,30 @@ func executeLine(k *libkademlia.Kademlia, line string) (response string) {
 			response = fmt.Sprintf("OK: Found value %s", value)
 		}
 	//TODO: add support later
-	case toks[0] == "vanish":
- 		if len(toks) != 5 {
- 			response = "usage: vanish [VDO ID] [data] [numberKeys] [threshold]"
- 			return
- 		}
-		data := []byte(toks[2])
-		numberKeystemp, err := strconv.Atoi(toks[3])
-		if err != nil {
-			response = fmt.Sprintf("Error: vanish numberKeys passed is too large, not a single byte")
-		}
-		numberKeys := byte(numberKeystemp)
-		thresholdtemp, err := strconv.Atoi(toks[4])
-		if err != nil {
-			response = fmt.Sprintf("Error: vanish threshold passed is too large, not a single byte")
-		}
-		threshold := byte(thresholdtemp)
-
-		timeoutSeconds := 0 // TODO: extra credit
- 		vdo := k.Vanish(data, numberKeys, threshold, timeoutSeconds)
- 		if vdo.AccessKey == 0 {
- 			response = "ERR: Vanish returns nil"
- 		} else {
- 			response = fmt.Sprintf("OK: VanashingDataObject created: %v", vdo)
- 		}
+	// case toks[0] == "vanish":
+ // 		if len(toks) != 5 {
+ // 			response = "usage: vanish [VDO ID] [data] [numberKeys] [threshold]"
+ // 			return
+ // 		}
+	// 	data := []byte(toks[2])
+	// 	numberKeystemp, err := strconv.Atoi(toks[3])
+	// 	if err != nil {
+	// 		response = fmt.Sprintf("Error: vanish numberKeys passed is too large, not a single byte")
+	// 	}
+	// 	numberKeys := byte(numberKeystemp)
+	// 	thresholdtemp, err := strconv.Atoi(toks[4])
+	// 	if err != nil {
+	// 		response = fmt.Sprintf("Error: vanish threshold passed is too large, not a single byte")
+	// 	}
+	// 	threshold := byte(thresholdtemp)
+	//
+	// 	timeoutSeconds := 0 // TODO: extra credit
+ // 		vdo := k.Vanish(data, numberKeys, threshold, timeoutSeconds)
+ // 		if vdo.AccessKey == 0 {
+ // 			response = "ERR: Vanish returns nil"
+ // 		} else {
+ // 			response = fmt.Sprintf("OK: VanashingDataObject created: %v", vdo)
+ // 		}
 	//TODO: add support later
 	// case toks[0] == "unvanish":
  // 		if len(toks) != 3 {

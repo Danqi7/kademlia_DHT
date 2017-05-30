@@ -100,13 +100,15 @@ func (ka *Kademlia) VanishData(data []byte, numberKeys byte,
 	for key, val := range(sssMap) {
 		all := append([]byte{key}, val...)
 		//just use the contact id as the key for the stored share in table
-		storedKey := CopyID(ids[i])
-		_, err := ka.DoIterativeStore(storedKey, all)
+		storeAddr := CopyID(ids[i])
+		_, err := ka.DoIterativeStore(storeAddr, all)
 
 		if err != nil {
 			log.Printf("Vanish DoIterativeStore Error: %s\n", err.Error())
 	 		return VanashingDataObject{}
 		}
+
+		i += 1
 	}
 
 	return vdo
