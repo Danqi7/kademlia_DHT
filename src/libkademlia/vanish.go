@@ -75,7 +75,7 @@ func decrypt(key []byte, ciphertext []byte) (text []byte) {
 
 func (ka *Kademlia) VanishData(data []byte, numberKeys byte,
 	threshold byte, timeoutSeconds int) (vdo VanashingDataObject) {
-
+	log.Printf("VanishData called!")
 	K := GenerateRandomCryptoKey()
 	ciphertext := encrypt(K, data)
 
@@ -101,6 +101,7 @@ func (ka *Kademlia) VanishData(data []byte, numberKeys byte,
 		all := append([]byte{key}, val...)
 		//just use the contact id as the key for the stored share in table
 		storeAddr := CopyID(ids[i])
+		log.Println("VANISH DoIterativeStore key: ", storeAddr.AsString())
 		_, err := ka.DoIterativeStore(storeAddr, all)
 
 		if err != nil {
@@ -118,12 +119,13 @@ func (ka *Kademlia) UnvanishData(vdo VanashingDataObject) (data []byte) {
 	L := vdo.AccessKey
 	numberKeys := vdo.NumberKeys
 	threshold := vdo.Threshold
-
+	log.Println("inside==!!! Unvanish")
 
 	keyShares := make(map[byte][]byte)
 	cnt := 0
 	ids := CalculateSharedKeyLocations(L, int64(numberKeys))
 	for _, id := range ids {
+		log.Println("inside=========== Unvanish id range loop")
 		storedKey := CopyID(id)
 		value, err := ka.DoIterativeFindValue(storedKey)
 		if err != nil {

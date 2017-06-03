@@ -528,7 +528,7 @@ func (ka *Kademlia) DoIterativeStore(key ID, value []byte) ([]Contact, error) {
  	if err != nil {
  		return nil, err
  	}
-
+	log.Println()
 	// send Store RPC to every contact
  	for _, c := range foundContacts {
  		ka.DoStore(&c, key, value)
@@ -676,7 +676,6 @@ func (ka *Kademlia) DoIterativeFindValue(key ID) (value []byte, err error) {
 // For project 3!
 func (ka *Kademlia) Vanish(vdoID ID, data []byte, numberKeys byte,
 	threshold byte, timeoutSeconds int) (vdo VanashingDataObject) {
-
 	// create vdo and sprinkle key shares in its contacts
 	vdo = ka.VanishData(data, numberKeys, threshold, timeoutSeconds)
 
@@ -684,38 +683,76 @@ func (ka *Kademlia) Vanish(vdoID ID, data []byte, numberKeys byte,
 	ka.semVdos <- 1
 	ka.Vdos[vdoID] = vdo
 	<- ka.semVdos
-
+	log.Println("Vanish......, with vdoID:", vdoID.AsString())
 	return vdo
 }
-// TODO: don't know what is searchKey here, I assume it's the VDOID; could be wrong
-func (ka *Kademlia) Unvanish(searchKey ID) (data []byte) {
-	//find the vdo in local vdos
-	ka.semVdos <- 1
-	vdo, ok := ka.Vdos[searchKey]
-	<- ka.semVdos
-
-	if ok != true {
-		log.Println("Unvanish Error: Failed to find the VDO locally: ", searchKey.AsString())
-		return nil
-	}
-
-	text := ka.UnvanishData(vdo)
-	return text
-}
+// // TODO: don't know what is searchKey here, I assume it's the VDOID; could be wrong
+// func (ka *Kademlia) Unvanish(searchKey ID) (data []byte) {
+// 	//find the vdo in local vdos
+// 	ka.semVdos <- 1
+// 	vdo, ok := ka.Vdos[searchKey]
+// 	<- ka.semVdos
+//
+// 	if ok != true {
+// 		log.Println("Unvanish Error: Failed to find the VDO locally: ", searchKey.AsString())
+// 		return nil
+// 	}
+//
+// 	text := ka.UnvanishData(vdo)
+// 	return text
+// }
 
 // TODO: don't know if this would be useful; this whole assignment is confusing
 // just write it down so later we can just copy and paste into right place
-func (ka *Kademlia) DoUnvanish(NodeID ID, VdoId ID) (data []byte) {
-	// ask for vdo for each conatct
+func (ka *Kademlia) Unvanish(NodeID ID, vdoID ID) (data []byte) {
+	// check if itself has it
+	//find the vdo in local vdos
+	ka.semVdos <- 1
+	vdo, ok := ka.Vdos[vdoID]
+	<- ka.semVdos
+
+	if ok == true {
+		// has it on this node itself
+		data = ka.UnvanishData(vdo)
+		if data != nil {
+			return data
+		}
+	}
+
+	// local find node
 	foundContacts := ka.FindCloseNodes(NodeID, k)
 	for _, contact := range foundContacts {
-		vdo, err := ka.DoGetVDO(&contact, VdoId)
+		if contact.NodeID.Equals(NodeID) {
+			// find it and ask it for vdo
+			log.Println("locally find the node!!!!!!!!!!!!!!!!!!!")
+			vdo, err := ka.DoGetVDO(&contact, vdoID)
+			if err == nil {
+				data = ka.UnvanishData(vdo)
 
-		if err == nil {
-			text := ka.UnvanishData(vdo)
+				if data != nil {
+					return data
+				}
+			}
+		}
+	}
 
-			if text != nil {
-				return text
+	// iterative find node
+	contacts, _ := ka.DoIterativeFindNode(NodeID)
+	if contacts == nil {
+		return nil
+	}
+
+	for _, contact := range contacts {
+		if contact.NodeID.Equals(NodeID) {
+			log.Println("terativeFindNode the node!!!!!!!!!!!!!!!!!!!")
+			// find it and ask it for vdo
+			vdo, err := ka.DoGetVDO(&contact, vdoID)
+			if err == nil {
+				data = ka.UnvanishData(vdo)
+
+				if data != nil {
+					return data
+				}
 			}
 		}
 	}
@@ -725,7 +762,7 @@ func (ka *Kademlia) DoUnvanish(NodeID ID, VdoId ID) (data []byte) {
 }
 
 // TODO: don't know if this would be useful; this whole assignment is confusing
-func (ka *Kademlia) DoGetVDO(contact *Contact, VdoId ID) (VanashingDataObject, error) {
+func (ka *Kademlia) DoGetVDO(contact *Contact, vdoID ID) (VanashingDataObject, error) {
 	address := contact.Host.String() + ":" + strconv.Itoa(int(contact.Port))
 	path := rpc.DefaultRPCPath + strconv.Itoa(int(contact.Port))
 
@@ -736,7 +773,7 @@ func (ka *Kademlia) DoGetVDO(contact *Contact, VdoId ID) (VanashingDataObject, e
 
 	request := new(GetVDORequest)
 	request.Sender = ka.SelfContact
-	request.VdoID = VdoId
+	request.VdoID = vdoID
 	request.MsgID = NewRandomID()
 
 	var result GetVDOResult
