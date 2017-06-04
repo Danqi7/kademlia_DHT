@@ -29,14 +29,15 @@ const (
 
 // Kademlia type. You can put whatever state you need in this.
 type Kademlia struct {
-	NodeID      ID
-	SelfContact Contact
-	KbucketList []Kbucket
-	Table       map[ID][]byte
-	Vdos		map[ID]VanashingDataObject
-	sem         chan int
-	semTable    chan int
-	semVdos		chan int //semaphore for Vdos
+	NodeID      		ID
+	SelfContact 		Contact
+	KbucketList 		[]Kbucket
+	Table       		map[ID][]byte
+	Vdos				map[ID]VanashingDataObject
+	sem         		chan int
+	semTable    		chan int
+	semVdos				chan int //semaphore for Vdos
+	VanishLastTimeOut 	int64 // keep track of last timeout
 }
 
 func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
@@ -373,6 +374,7 @@ func (ka *Kademlia) LocalFindValue(searchKey ID) ([]byte, error) {
 	if ok == true && val != nil {
 		return val, nil
 	}
+
 	return []byte(""), &FindLocalValError{"Can't find the value in the local"}
 }
 
@@ -466,7 +468,6 @@ func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int, timeout chan bo
 // iteratively find closest k contacts
 // TODO: and print out some nice formatted info
 func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
-	log.Println("yoooo!")
 	// initialize an empty ShortList
 	var sl ShortList
 	sl.Init(k, id)
@@ -677,7 +678,7 @@ func (ka *Kademlia) DoIterativeFindValue(key ID) (value []byte, err error) {
 func (ka *Kademlia) Vanish(vdoID ID, data []byte, numberKeys byte,
 	threshold byte, timeoutSeconds int) (vdo VanashingDataObject) {
 	// create vdo and sprinkle key shares in its contacts
-	vdo = ka.VanishData(data, numberKeys, threshold, timeoutSeconds)
+	vdo = ka.VanishData(vdoID, data, numberKeys, threshold, timeoutSeconds)
 
 	// store the created vdo
 	ka.semVdos <- 1
@@ -724,7 +725,6 @@ func (ka *Kademlia) Unvanish(NodeID ID, vdoID ID) (data []byte) {
 	for _, contact := range foundContacts {
 		if contact.NodeID.Equals(NodeID) {
 			// find it and ask it for vdo
-			log.Println("locally find the node!!!!!!!!!!!!!!!!!!!")
 			vdo, err := ka.DoGetVDO(&contact, vdoID)
 			if err == nil {
 				data = ka.UnvanishData(vdo)
@@ -744,7 +744,6 @@ func (ka *Kademlia) Unvanish(NodeID ID, vdoID ID) (data []byte) {
 
 	for _, contact := range contacts {
 		if contact.NodeID.Equals(NodeID) {
-			log.Println("terativeFindNode the node!!!!!!!!!!!!!!!!!!!")
 			// find it and ask it for vdo
 			vdo, err := ka.DoGetVDO(&contact, vdoID)
 			if err == nil {
@@ -892,7 +891,6 @@ func (ka *Kademlia) FindCloseNodes(nodeID ID, numNodes int) []Contact {
 func (ka *Kademlia) StoreKeyVal(key ID, val []byte) {
 	copyval := make([]byte, len(val))
 	copy(copyval, val)
-
 	// store key, val to table
 	ka.semTable <- 1
 	ka.Table[CopyID(key)] = copyval

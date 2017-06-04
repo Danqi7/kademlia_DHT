@@ -380,7 +380,7 @@ func executeLine(k *libkademlia.Kademlia, line string) (response string) {
 		}
 		threshold := byte(thresholdtemp)
 
-		timeoutSeconds := 0 // TODO: extra credit
+		timeoutSeconds := 6 // timeoutSeconds is 60 seconds
  		vdo := k.Vanish(VdoID, data, numberKeys, threshold, timeoutSeconds)
  		if vdo.AccessKey == 0 {
  			response = "ERR: Vanish returns nil"
