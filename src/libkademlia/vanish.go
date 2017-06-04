@@ -5,10 +5,15 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"io"
-	mathrand "math/rand"
-	"time"
-	"sss"
 	"log"
+	mathrand "math/rand"
+	"sss"
+	"time"
+)
+
+const (
+	epoch_in_seconds   = 10
+	resplit_time_ratio = 0.8
 )
 
 type VanashingDataObject struct {
@@ -31,8 +36,8 @@ func GenerateRandomAccessKey() (accessKey int64) {
 	return
 }
 
-func CalculateSharedKeyLocations(accessKey int64, count int64, lastTimeOut int64) (ids []ID) {
-	r := mathrand.New(mathrand.NewSource(accessKey * lastTimeOut))
+func CalculateSharedKeyLocations(accessKey int64, count int64) (ids []ID) {
+	r := mathrand.New(mathrand.NewSource(accessKey * calculateCurrentEpoch()))
 	ids = make([]ID, count)
 	for i := int64(0); i < count; i++ {
 		for j := 0; j < IDBytes; j++ {
@@ -73,113 +78,14 @@ func decrypt(key []byte, ciphertext []byte) (text []byte) {
 	return ciphertext
 }
 
-func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
-	threshold byte, timeoutSeconds int) (vdo VanashingDataObject) {
-	K := GenerateRandomCryptoKey()
-	ciphertext := encrypt(K, data)
-
-	sssMap, err := sss.Split(numberKeys, threshold, K)
-	if err != nil {
- 		log.Printf("Vanish cannot split key: %d/%d\n", threshold, numberKeys)
- 		return VanashingDataObject{}
- 	}
-
-	L := GenerateRandomAccessKey()
-	ka.VanishLastTimeOut = time.Now().UnixNano()
-	ids := CalculateSharedKeyLocations(L, int64(numberKeys), ka.VanishLastTimeOut)
-
-	vdo = VanashingDataObject{
-		AccessKey: L,
-		Ciphertext: ciphertext,
-		NumberKeys: numberKeys,
-		Threshold: threshold,
-	}
-
-	timeoutCh := make(chan bool)
-	// refresh key shares and sprinkles after each timeout
-	go func() {
-		for {
-			time.Sleep(3000 * time.Millisecond) // check timeout every 30 seconds
-			if (time.Now().UnixNano() - ka.VanishLastTimeOut) / 1000000000 > int64(timeoutSeconds) {
-				timeoutCh <- true
-			}
-		}
-	}()
-
-	// listen to timeout and refresh key shares and sprinkles
-	go func() {
-		for {
-			select {
-			case <- timeoutCh:
-				newK := GenerateRandomCryptoKey()
-				newCipher := encrypt(newK, data)
-				newSSSMap, err := sss.Split(numberKeys, threshold, newK)
-				if err != nil {
-					log.Printf("Vanish cannot split key when refreshing: %d/%d\n", threshold, numberKeys)
-				}
-				// update vanishLastTimeOut
-				ka.VanishLastTimeOut = time.Now().UnixNano()
-				newL := GenerateRandomAccessKey()
-				newIDs := CalculateSharedKeyLocations(newL, int64(numberKeys), ka.VanishLastTimeOut)
-				vdo = VanashingDataObject{
-					AccessKey: newL,
-					Ciphertext: newCipher,
-					NumberKeys: numberKeys,
-					Threshold: threshold,
-				}
-
-				// sprinkle as always
-				i := 0
-				for key, val := range(newSSSMap) {
-					all := append([]byte{key}, val...)
-					//just use the contact id as the key for the stored share in table
-					storeAddr := CopyID(newIDs[i])
-					_, err := ka.DoIterativeStore(storeAddr, all)
-
-					if err != nil {
-						log.Printf("Vanish refreshing DoIterativeStore Error: %s\n", err.Error())
-					}
-
-					i += 1
-				}
-				// update vdo
-				ka.semVdos <- 1
-				ka.Vdos[vdoID] = vdo
-				<- ka.semVdos
-
-				log.Println("REFRESHING SUCCEED.")
-
-			}
-		}
-	}()
-
-	// sprinkle splits to ids, initial case
-	i := 0
-	for key, val := range(sssMap) {
-		all := append([]byte{key}, val...)
-		//just use the contact id as the key for the stored share in table
-		storeAddr := CopyID(ids[i])
-		_, err := ka.DoIterativeStore(storeAddr, all)
-
-		if err != nil {
-			log.Printf("Vanish DoIterativeStore Error: %s\n", err.Error())
-	 		return VanashingDataObject{}
-		}
-
-		i += 1
-	}
-
-	return vdo
-}
-
-func (ka *Kademlia) UnvanishData(vdo VanashingDataObject) (data []byte) {
+func (ka *Kademlia) recoverOriginalKey(vdo VanashingDataObject) []byte {
 	L := vdo.AccessKey
 	numberKeys := vdo.NumberKeys
 	threshold := vdo.Threshold
 
 	keyShares := make(map[byte][]byte)
 	cnt := 0
-	ids := CalculateSharedKeyLocations(L, int64(numberKeys), ka.VanishLastTimeOut)
+	ids := CalculateSharedKeyLocations(L, int64(numberKeys)) //, ka.VanishLastTimeOut)
 	for _, id := range ids {
 		storedKey := CopyID(id)
 		value, err := ka.DoIterativeFindValue(storedKey)
@@ -207,7 +113,117 @@ func (ka *Kademlia) UnvanishData(vdo VanashingDataObject) (data []byte) {
 	}
 
 	K := sss.Combine(keyShares)
-	decryptText := decrypt(K, vdo.Ciphertext)
+	return K
+}
 
+func (ka *Kademlia) calculateCurrentEpoch() int64 {
+	current_time := time.Now().UnixNano()
+	current_epoch := current_time - current_time*(time.Second*epoch_in_seconds)
+	return int64(current_epoch)
+}
+
+// func (ka *Kademlia) calculateNextResplitTime() int64 {
+// 	return calculateCurrentEpoch() + int64(time.Second * epoch_in_seconds * resplit_time_ratio)
+// }
+
+func (ka *Kademlia) calculateResplitInterval() int64 {
+	return int64(time.Second * epoch_in_seconds * resplit_time_ratio)
+}
+
+func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
+	threshold byte, timeoutSeconds int) (vdo VanashingDataObject) {
+	K := GenerateRandomCryptoKey()
+	ciphertext := encrypt(K, data)
+
+	sssMap, err := sss.Split(numberKeys, threshold, K)
+	if err != nil {
+		log.Printf("Vanish cannot split key: %d/%d\n", threshold, numberKeys)
+		return VanashingDataObject{}
+	}
+
+	L := GenerateRandomAccessKey()
+	ka.VanishLastTimeOut = time.Now().UnixNano()
+	ids := CalculateSharedKeyLocations(L, int64(numberKeys)) //, ka.VanishLastTimeOut)
+
+	vdo = VanashingDataObject{
+		AccessKey:  L,
+		Ciphertext: ciphertext,
+		NumberKeys: numberKeys,
+		Threshold:  threshold,
+	}
+
+	// sprinkle splits to ids, initial case
+	i := 0
+	for key, val := range sssMap {
+		all := append([]byte{key}, val...)
+		//just use the contact id as the key for the stored share in table
+		storeAddr := CopyID(ids[i])
+		_, err := ka.DoIterativeStore(storeAddr, all)
+
+		if err != nil {
+			log.Printf("Vanish DoIterativeStore Error: %s\n", err.Error())
+			return VanashingDataObject{}
+		}
+
+		i += 1
+	}
+
+	// EC: Timeouts
+	timeoutCh := make(chan bool)
+
+	go func(timeOutLength int) {
+		accrued_time := 0
+		for {
+			time.Sleep(calculateResplitInterval() * time.Second)
+			// if (time.Now().UnixNano()-ka.VanishLastTimeOut)/1000000000 > int64(timeoutSeconds) {
+			timeoutCh <- true
+			// }
+			accrued_time += int(resplit_time_ratio * epoch_in_seconds)
+			if accrued_time+int(epoch_in_seconds) >= timeOutLength {
+				break
+			}
+		}
+	}(timeoutSeconds)
+
+	// listen to timeout and refresh key shares and sprinkles
+	go func() {
+		for {
+			select {
+			case <-timeoutCh:
+				newK := recoverOriginalKey(vdo)
+				newSSSMap, err := sss.Split(vdo.NumberKeys, vdo.Threshold, newK)
+				if err != nil {
+					log.Printf("Vanish cannot split key when refreshing: %d/%d\n", threshold, numberKeys)
+				}
+				// update vanishLastTimeOut
+				ka.VanishLastTimeOut = time.Now().UnixNano()
+				newIDs := CalculateSharedKeyLocations(vdo.AccessKey, int64(vdo.NumberKeys)) //, ka.VanishLastTimeOut)
+
+				// sprinkle as always
+				i := 0
+				for key, val := range newSSSMap {
+					all := append([]byte{key}, val...)
+					//just use the contact id as the key for the stored share in table
+					storeAddr := CopyID(newIDs[i])
+					_, err := ka.DoIterativeStore(storeAddr, all)
+
+					if err != nil {
+						log.Printf("Vanish refreshing DoIterativeStore Error: %s\n", err.Error())
+					}
+
+					i += 1
+				}
+				log.Println("REFRESHING SUCCEED.")
+
+			}
+		}
+	}()
+
+	return vdo
+}
+
+func (ka *Kademlia) UnvanishData(vdo VanashingDataObject) (data []byte) {
+	K := recoverOriginalKey(vdo)
+	decryptText := decrypt(K, vdo.Ciphertext)
 	return decryptText
 }
