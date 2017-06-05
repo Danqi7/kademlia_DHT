@@ -173,7 +173,7 @@ func (ka *Kademlia) recoverOriginalKey(vdo VanashingDataObject) []byte {
 func calculateCurrentEpoch() int64 {
 	current_time := int64(time.Now().UnixNano())
 	current_epoch := current_time / (int64(time.Second) * epoch_in_seconds)
-	log.Printf("calculateCurrentEpoch - current time: %d; current epoch: %d\n", current_time, current_epoch)
+	// log.Printf("calculateCurrentEpoch - current time: %d; current epoch: %d\n", current_time, current_epoch)
 	return current_epoch
 }
 
@@ -232,11 +232,11 @@ func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
 		accrued_time := 0
 		for {
 			secondsPassedInThisEpoch := secondsPassedInEpoch()
-			if secondsPassedInThisEpoch >= time_before_resplit {
+			if secondsPassedInThisEpoch >= time_before_resplit && accrued_time == 0 {
 				timeoutCh <- true
 				time.Sleep(time.Duration((epoch_in_seconds - secondsPassedInThisEpoch)) * time.Second)
 				accrued_time += int(epoch_in_seconds - secondsPassedInThisEpoch)
-				log.Printf("Refresh accrued time, short notice: %d/%d\n", accrued_time, timeOutLength)
+				log.Printf("Refresh rest time accrued, short notice: %d/%d\n", accrued_time, timeOutLength)
 				continue
 			}
 
@@ -249,6 +249,9 @@ func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
 				log.Printf("Refresh terminated: %d/%d\n", accrued_time, timeOutLength)
 				return
 			}
+			time.Sleep(time.Duration(epoch_in_seconds-time_before_resplit) * time.Second)
+			accrued_time += int(epoch_in_seconds - time_before_resplit)
+			log.Printf("Refresh rest time accrued: %d/%d\n", accrued_time, timeOutLength)
 		}
 	}(timeoutSeconds)
 

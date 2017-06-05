@@ -7,16 +7,16 @@ import (
 )
 
 type ContactInfo struct {
-	Node 	Contact
-	Status	bool // for isActive
+	Node   Contact
+	Status bool // for isActive
 }
 
 type ShortList struct {
-	ContactInfos		[]ContactInfo
-	TargetID    		ID
-	ClosestNode     	*Contact
-	Capacity    		int
-	sem         		chan int
+	ContactInfos []ContactInfo
+	TargetID     ID
+	ClosestNode  *Contact
+	Capacity     int
+	sem          chan int
 }
 
 func (sl *ShortList) Init(k int, target ID) {
@@ -45,7 +45,6 @@ func (sl *ShortList) UpdateClosest(contact Contact) bool {
 	return false
 }
 
-
 // Add input contact to ShortList if ShortList is not full
 // and ShortList doesn't contain the input contact
 func (sl *ShortList) AddContact(contact Contact) bool {
@@ -73,7 +72,7 @@ func (sl *ShortList) AddContact(contact Contact) bool {
 	// update the closestNode if possible, now assume update everytime new contact added
 	isClosestChanged := sl.UpdateClosest(contact)
 
-	log.Println("AddContact closestUpdated: ", isClosestChanged)
+	// log.Println("AddContact closestUpdated: ", isClosestChanged)
 
 	return isClosestChanged
 }
@@ -121,7 +120,7 @@ func (sl *ShortList) AddContacts(contacts []Contact) bool {
 	})
 
 	// sort contacts in ShortList by distance
-	sort.Slice(sl.ContactInfos, func (i, j int) bool {
+	sort.Slice(sl.ContactInfos, func(i, j int) bool {
 		c1 := sl.ContactInfos[i]
 		c2 := sl.ContactInfos[j]
 
@@ -155,8 +154,8 @@ func (sl *ShortList) AddContacts(contacts []Contact) bool {
 		index += 1
 	}
 
-	log.Println("AddContacts finished: ")
-	<- sl.sem
+	// log.Println("AddContacts finished: ")
+	<-sl.sem
 	return isClosestChanged
 }
 

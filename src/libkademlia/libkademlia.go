@@ -529,7 +529,7 @@ func (ka *Kademlia) DoIterativeStore(key ID, value []byte) ([]Contact, error) {
 	if err != nil {
 		return nil, err
 	}
-	log.Println()
+	// log.Println()
 	// send Store RPC to every contact
 	for _, c := range foundContacts {
 		ka.DoStore(&c, key, value)
@@ -684,7 +684,7 @@ func (ka *Kademlia) Vanish(vdoID ID, data []byte, numberKeys byte,
 	ka.semVdos <- 1
 	ka.Vdos[vdoID] = vdo
 	<-ka.semVdos
-	log.Println("Vanish......, with vdoID:", vdoID.AsString())
+	log.Println("Vanish...... with vdoID:", vdoID.AsString())
 	return vdo
 }
 
