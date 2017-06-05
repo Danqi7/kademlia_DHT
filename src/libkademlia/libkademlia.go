@@ -37,7 +37,6 @@ type Kademlia struct {
 	sem         		chan int
 	semTable    		chan int
 	semVdos				chan int //semaphore for Vdos
-	VanishLastTimeOut 	int64 // keep track of last timeout
 }
 
 func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
