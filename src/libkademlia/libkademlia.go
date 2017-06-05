@@ -29,15 +29,15 @@ const (
 
 // Kademlia type. You can put whatever state you need in this.
 type Kademlia struct {
-	NodeID      		ID
-	SelfContact 		Contact
-	KbucketList 		[]Kbucket
-	Table       		map[ID][]byte
-	Vdos				map[ID]VanashingDataObject
-	sem         		chan int
-	semTable    		chan int
-	semVdos				chan int //semaphore for Vdos
-	VanishLastTimeOut 	int64 // keep track of last timeout
+	NodeID            ID
+	SelfContact       Contact
+	KbucketList       []Kbucket
+	Table             map[ID][]byte
+	Vdos              map[ID]VanashingDataObject
+	sem               chan int
+	semTable          chan int
+	semVdos           chan int //semaphore for Vdos
+	VanishLastTimeOut int64    // keep track of last timeout
 }
 
 func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
@@ -54,7 +54,7 @@ func NewKademliaWithId(laddr string, nodeID ID) *Kademlia {
 	// init Table
 	ka.Table = make(map[ID][]byte)
 	// init Vdos
-	ka.Vdos = make (map[ID]VanashingDataObject)
+	ka.Vdos = make(map[ID]VanashingDataObject)
 
 	// init ka.semaphores
 	ka.sem = make(chan int, 1)
@@ -402,7 +402,7 @@ type ReturnedContacts struct {
 // For project 2!
 func (ka *Kademlia) ReachOutForContacts(returnedContactsCh chan ReturnedContacts, c Contact, id ID) {
 	// acquire local closest contacts
-	log.Println("ReachOutForContacts...")
+	// log.Println("ReachOutForContacts...")
 	contacts, err := ka.DoFindNode(&c, id)
 	var res ReturnedContacts
 	if err != nil {
@@ -426,7 +426,7 @@ func (ka *Kademlia) ReachOutForContacts(returnedContactsCh chan ReturnedContacts
 // Assume DoFindNode always returnss
 func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int, timeout chan bool, closestUpdatedCh chan bool) {
 	contacts := sl.GetInactiveContacts(num)
-	log.Println("FindNodeCycle inactiveContact:", len(contacts))
+	// log.Println("FindNodeCycle inactiveContact:", len(contacts))
 	// no inactive contacts so far, just return false
 	if contacts == nil {
 		closestUpdatedCh <- false
@@ -450,7 +450,7 @@ func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int, timeout chan bo
 	// and either mark source active or remove it
 	closestUpdated := false
 	for i := 0; i < size; i++ {
-		res := <- returnedContactsCh
+		res := <-returnedContactsCh
 		if res.Contacts == nil {
 			// remove non-responding contact from shortlist
 			sl.RemoveContact(res.Source)
@@ -460,7 +460,7 @@ func (ka *Kademlia) FindNodeCycle(sl *ShortList, id ID, num int, timeout chan bo
 		}
 	}
 
-	log.Println("FindNodeCycle closestUpdated: ", closestUpdated)
+	// log.Println("FindNodeCycle closestUpdated: ", closestUpdated)
 	closestUpdatedCh <- closestUpdated
 	return
 }
@@ -483,7 +483,7 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 		//NOTE: do we still need to print it?
 		return nil, &ContactNotFoundError{id, "no contact found in routing table, abort DoIterativeFindNode"}
 	}
-	log.Println("returning from FindCloseNodes, with ", realSize)
+	// log.Println("returning from FindCloseNodes, with ", realSize)
 	// add to shortlist
 	sl.AddContacts(foundContacts)
 
@@ -496,7 +496,7 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 
 	for sl.GetInactiveCount() != 0 {
 		select {
-		case isClosestChanged := <- isClosestChangedCh:
+		case isClosestChanged := <-isClosestChangedCh:
 			if isClosestChanged {
 				go ka.FindNodeCycle(&sl, id, alpha, timeout, isClosestChangedCh)
 			} else {
@@ -519,28 +519,28 @@ func (ka *Kademlia) DoIterativeFindNode(id ID) ([]Contact, error) {
 		res += "-------------------------------------\n"
 	}
 
-	log.Println(res)
+	// log.Println(res)
 
 	return contacts, nil
 }
 
 func (ka *Kademlia) DoIterativeStore(key ID, value []byte) ([]Contact, error) {
 	foundContacts, err := ka.DoIterativeFindNode(key)
- 	if err != nil {
- 		return nil, err
- 	}
+	if err != nil {
+		return nil, err
+	}
 	log.Println()
 	// send Store RPC to every contact
- 	for _, c := range foundContacts {
- 		ka.DoStore(&c, key, value)
- 	}
+	for _, c := range foundContacts {
+		ka.DoStore(&c, key, value)
+	}
 
- 	return foundContacts, nil
+	return foundContacts, nil
 }
 
 func (ka *Kademlia) ReachOutForContactsValues(returnedContactsCh chan ReturnedContacts, foundValueCh chan []byte, c Contact, id ID) {
 	// acquire local closest contacts
-	log.Println("ReachOutForContactsValues...")
+	// log.Println("ReachOutForContactsValues...")
 	val, contacts, err := ka.DoFindValue(&c, id)
 	var res ReturnedContacts
 	if err != nil {
@@ -568,7 +568,7 @@ func (ka *Kademlia) ReachOutForContactsValues(returnedContactsCh chan ReturnedCo
 // Assume DoFindValue always returnss
 func (ka *Kademlia) FindValueCycle(sl *ShortList, id ID, num int, timeout chan bool, closestUpdatedCh chan bool, foundValueCh chan []byte) {
 	contacts := sl.GetInactiveContacts(num)
-	log.Println("FindNodeCycle inactiveContact:", len(contacts))
+	// log.Println("FindNodeCycle inactiveContact:", len(contacts))
 	// no inactive contacts so far, just return false
 	if contacts == nil {
 		closestUpdatedCh <- false
@@ -602,7 +602,7 @@ func (ka *Kademlia) FindValueCycle(sl *ShortList, id ID, num int, timeout chan b
 		}
 	}
 
-	log.Println("FindNodeCycle closestUpdated: ", closestUpdated)
+	// log.Println("FindNodeCycle closestUpdated: ", closestUpdated)
 	closestUpdatedCh <- closestUpdated
 	return
 }
@@ -623,7 +623,7 @@ func (ka *Kademlia) DoIterativeFindValue(key ID) (value []byte, err error) {
 		//NOTE: do we still need to print it?
 		return nil, &ContactNotFoundError{key, "contact found in routing table, abort DoIterativeFindNode"}
 	}
-	log.Println("returning from FindCloseNodes, with ", realSize)
+	// log.Println("returning from FindCloseNodes, with ", realSize)
 	// add to shortlist
 	sl.AddContacts(foundContacts)
 
@@ -683,10 +683,11 @@ func (ka *Kademlia) Vanish(vdoID ID, data []byte, numberKeys byte,
 	// store the created vdo
 	ka.semVdos <- 1
 	ka.Vdos[vdoID] = vdo
-	<- ka.semVdos
+	<-ka.semVdos
 	log.Println("Vanish......, with vdoID:", vdoID.AsString())
 	return vdo
 }
+
 // // TODO: don't know what is searchKey here, I assume it's the VDOID; could be wrong
 // func (ka *Kademlia) Unvanish(searchKey ID) (data []byte) {
 // 	//find the vdo in local vdos
@@ -710,7 +711,7 @@ func (ka *Kademlia) Unvanish(NodeID ID, vdoID ID) (data []byte) {
 	//find the vdo in local vdos
 	ka.semVdos <- 1
 	vdo, ok := ka.Vdos[vdoID]
-	<- ka.semVdos
+	<-ka.semVdos
 
 	if ok == true {
 		// has it on this node itself
@@ -795,7 +796,7 @@ func (ka *Kademlia) UpdateContact(update *Contact) {
 	ka.sem <- 1
 	index := ka.FindBucketIndex(update.NodeID)
 	bucket := ka.KbucketList[index]
-	log.Println("updating contact: ", update)
+	// log.Println("updating contact: ", update)
 	err := bucket.Update(*update)
 	//bucket is full
 	if err != nil {
@@ -837,9 +838,9 @@ func (ka *Kademlia) FindCloseNodes(nodeID ID, numNodes int) []Contact {
 	bucket := ka.KbucketList[index]
 
 	nodes := make([]Contact, 0)
-	log.Println("Calling FindCloseNodes by: ", ka.SelfContact.Port)
+	// log.Println("Calling FindCloseNodes by: ", ka.SelfContact.Port)
 	ka.sem <- 1
-	ka.PrintKbucketList()
+	// ka.PrintKbucketList()
 	for i := 0; i < len(bucket.ContactList); i++ {
 		nodes = append(nodes, bucket.ContactList[i])
 	}

@@ -11,9 +11,37 @@ import (
 	"time"
 )
 
+/*
+ * Extra Credit Implementation Notes:
+ *
+ * Concept
+ * - epoch: a period of time of prespecified length.
+ *          The first epoch starts at Jan. 1 1970 00:00:00
+ *
+ * Constants
+ * - epoch_in_seconds: 10 second per epoch, or 8,640 epoches a day
+ * - time_beore_resplit: at the 8th second, we call for a resplit, if needed
+ *
+ * We want to stick to the "do-nothing" expiration policy, so
+ * 1. We included the epoch number in the computation of split key locations,
+ *    through setting the seed of the pseudo-random number generator to be
+ *    the product of the accessKey and the epoch number of current time
+ * 2. We adopted a very weak notion of expiration in favor of retrieval:
+ *    if the timeout ends at the beginning of an epoch, users would still
+ *    be able to retrieve the data until the end of the epoch
+ * 3. At vanish time, two go-routines are kicked off:
+ *    One to check periodically whether the end of an epoch will come before timeout;
+ *    if so it will signal the other go-routine to apply a resplit
+ * 4. We modified the key recovery code to use the current and, if doing so fails,
+ *    the immediate next epoch to compute the split keys. We do so because
+ *    when nodes are few and we resplit the encryption key, the split key
+ *    stored remotely under the same vdoID gets overwritten -- if an unvanish
+ *    is issued between the time of our resplit and the start of the next new epoch,
+ *    the user would be unable to retrieve the data.
+ */
 const (
-	epoch_in_seconds   = 10
-	resplit_time_ratio = 0.8
+	epoch_in_seconds    = 10 // number of seconds in an epoch. For example, 8-hour epoch = 8 * 60 * 60 = 28,800 seconds
+	time_before_resplit = 8  // after this many seconds after the start of an epoch, a resplit happens
 )
 
 type VanashingDataObject struct {
@@ -38,6 +66,17 @@ func GenerateRandomAccessKey() (accessKey int64) {
 
 func CalculateSharedKeyLocations(accessKey int64, count int64) (ids []ID) {
 	r := mathrand.New(mathrand.NewSource(accessKey * calculateCurrentEpoch()))
+	ids = make([]ID, count)
+	for i := int64(0); i < count; i++ {
+		for j := 0; j < IDBytes; j++ {
+			ids[i][j] = uint8(r.Intn(256))
+		}
+	}
+	return
+}
+
+func CalculateSharedKeyLocationsNextEpoch(accessKey int64, count int64) (ids []ID) {
+	r := mathrand.New(mathrand.NewSource(accessKey * calculateNextEpoch()))
 	ids = make([]ID, count)
 	for i := int64(0); i < count; i++ {
 		for j := 0; j < IDBytes; j++ {
@@ -78,14 +117,21 @@ func decrypt(key []byte, ciphertext []byte) (text []byte) {
 	return ciphertext
 }
 
-func (ka *Kademlia) recoverOriginalKey(vdo VanashingDataObject) []byte {
+func (ka *Kademlia) acquireKeyShares(isCurrentEpoch bool, vdo VanashingDataObject) (map[byte][]byte, int) {
+
 	L := vdo.AccessKey
-	numberKeys := vdo.NumberKeys
+	numberKeys := int64(vdo.NumberKeys)
 	threshold := vdo.Threshold
 
 	keyShares := make(map[byte][]byte)
 	cnt := 0
-	ids := CalculateSharedKeyLocations(L, int64(numberKeys)) //, ka.VanishLastTimeOut)
+
+	var ids []ID
+	if isCurrentEpoch {
+		ids = CalculateSharedKeyLocations(L, numberKeys)
+	} else {
+		ids = CalculateSharedKeyLocationsNextEpoch(L, numberKeys)
+	}
 	for _, id := range ids {
 		storedKey := CopyID(id)
 		value, err := ka.DoIterativeFindValue(storedKey)
@@ -101,33 +147,43 @@ func (ka *Kademlia) recoverOriginalKey(vdo VanashingDataObject) []byte {
 		}
 
 		// only need to find threshold number of shares to decrypt
-		if cnt >= int(threshold) {
+		if cnt > int(threshold) {
 			break
 		}
 	}
+	return keyShares, cnt
+}
 
-	// not enough shares are found, can't decrypt!
-	if cnt < int(threshold) {
-		log.Printf("Only %d shares are found, cannot decrypt\n", cnt)
-		return nil
+func (ka *Kademlia) recoverOriginalKey(vdo VanashingDataObject) []byte {
+
+	keyShares, cnt := ka.acquireKeyShares(true, vdo)
+	if cnt <= int(vdo.Threshold) {
+		keyShares, cnt = ka.acquireKeyShares(false, vdo)
+		if cnt <= int(vdo.Threshold) {
+			// not enough shares are found, can't decrypt!
+			log.Printf("Only %d shares are found, cannot decrypt\n", cnt)
+			return nil
+		}
 	}
 
 	K := sss.Combine(keyShares)
 	return K
 }
 
-func (ka *Kademlia) calculateCurrentEpoch() int64 {
-	current_time := time.Now().UnixNano()
-	current_epoch := current_time - current_time*(time.Second*epoch_in_seconds)
-	return int64(current_epoch)
+func calculateCurrentEpoch() int64 {
+	current_time := int64(time.Now().UnixNano())
+	current_epoch := current_time / (int64(time.Second) * epoch_in_seconds)
+	log.Printf("calculateCurrentEpoch - current time: %d; current epoch: %d\n", current_time, current_epoch)
+	return current_epoch
 }
 
-// func (ka *Kademlia) calculateNextResplitTime() int64 {
-// 	return calculateCurrentEpoch() + int64(time.Second * epoch_in_seconds * resplit_time_ratio)
-// }
+func calculateNextEpoch() int64 {
+	return calculateCurrentEpoch() + 1
+}
 
-func (ka *Kademlia) calculateResplitInterval() int64 {
-	return int64(time.Second * epoch_in_seconds * resplit_time_ratio)
+func secondsPassedInEpoch() int64 {
+	current_second := time.Now().UnixNano() / int64(time.Second)
+	return current_second % epoch_in_seconds
 }
 
 func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
@@ -143,7 +199,7 @@ func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
 
 	L := GenerateRandomAccessKey()
 	ka.VanishLastTimeOut = time.Now().UnixNano()
-	ids := CalculateSharedKeyLocations(L, int64(numberKeys)) //, ka.VanishLastTimeOut)
+	ids := CalculateSharedKeyLocations(L, int64(numberKeys))
 
 	vdo = VanashingDataObject{
 		AccessKey:  L,
@@ -170,17 +226,28 @@ func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
 
 	// EC: Timeouts
 	timeoutCh := make(chan bool)
+	stopCh := make(chan bool)
 
 	go func(timeOutLength int) {
 		accrued_time := 0
 		for {
-			time.Sleep(calculateResplitInterval() * time.Second)
-			// if (time.Now().UnixNano()-ka.VanishLastTimeOut)/1000000000 > int64(timeoutSeconds) {
+			secondsPassedInThisEpoch := secondsPassedInEpoch()
+			if secondsPassedInThisEpoch >= time_before_resplit {
+				timeoutCh <- true
+				time.Sleep(time.Duration((epoch_in_seconds - secondsPassedInThisEpoch)) * time.Second)
+				accrued_time += int(epoch_in_seconds - secondsPassedInThisEpoch)
+				log.Printf("Refresh accrued time, short notice: %d/%d\n", accrued_time, timeOutLength)
+				continue
+			}
+
+			time.Sleep(time.Duration((time_before_resplit - secondsPassedInThisEpoch)) * time.Second)
 			timeoutCh <- true
-			// }
-			accrued_time += int(resplit_time_ratio * epoch_in_seconds)
+			accrued_time += int(time_before_resplit)
+			log.Printf("Refresh accrued time: %d/%d\n", accrued_time, timeOutLength)
 			if accrued_time+int(epoch_in_seconds) >= timeOutLength {
-				break
+				stopCh <- true
+				log.Printf("Refresh terminated: %d/%d\n", accrued_time, timeOutLength)
+				return
 			}
 		}
 	}(timeoutSeconds)
@@ -190,14 +257,14 @@ func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
 		for {
 			select {
 			case <-timeoutCh:
-				newK := recoverOriginalKey(vdo)
+				newK := ka.recoverOriginalKey(vdo)
 				newSSSMap, err := sss.Split(vdo.NumberKeys, vdo.Threshold, newK)
 				if err != nil {
 					log.Printf("Vanish cannot split key when refreshing: %d/%d\n", threshold, numberKeys)
+					return
 				}
 				// update vanishLastTimeOut
-				ka.VanishLastTimeOut = time.Now().UnixNano()
-				newIDs := CalculateSharedKeyLocations(vdo.AccessKey, int64(vdo.NumberKeys)) //, ka.VanishLastTimeOut)
+				newIDs := CalculateSharedKeyLocationsNextEpoch(vdo.AccessKey, int64(vdo.NumberKeys))
 
 				// sprinkle as always
 				i := 0
@@ -209,12 +276,14 @@ func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
 
 					if err != nil {
 						log.Printf("Vanish refreshing DoIterativeStore Error: %s\n", err.Error())
+						return
 					}
 
 					i += 1
 				}
 				log.Println("REFRESHING SUCCEED.")
-
+			case <-stopCh:
+				return
 			}
 		}
 	}()
@@ -223,7 +292,11 @@ func (ka *Kademlia) VanishData(vdoID ID, data []byte, numberKeys byte,
 }
 
 func (ka *Kademlia) UnvanishData(vdo VanashingDataObject) (data []byte) {
-	K := recoverOriginalKey(vdo)
+	K := ka.recoverOriginalKey(vdo)
+	if K == nil {
+		log.Printf("UnvanishData cannot recover the original key\n")
+		return nil
+	}
 	decryptText := decrypt(K, vdo.Ciphertext)
 	return decryptText
 }
